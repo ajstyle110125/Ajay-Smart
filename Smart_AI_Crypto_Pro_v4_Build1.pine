@@ -396,3 +396,81 @@ if finalSellSignal
 //-------------------------
 
 plot(signalStrength, title="Signal Strength", display=display.none)
+//====================================================
+// SECTION 07 - PROFESSIONAL TRADE ENGINE
+//====================================================
+
+//-------------------------
+// INPUTS
+//-------------------------
+
+string grpTrade = "Trade Engine"
+
+riskATRMultiplier = input.float(1.5, "SL ATR Multiplier", minval=0.5, step=0.1, group=grpTrade)
+rewardMultiplier = input.float(2.0, "Reward Multiplier", minval=1.0, step=0.5, group=grpTrade)
+
+//-------------------------
+// TRADE ENTRY
+//-------------------------
+
+if finalBuySignal and not tradeOpen
+    tradeOpen := true
+    tradeSide := 1
+
+    entryPrice := close
+    stopLoss := close - (atr * riskATRMultiplier)
+
+    tp1 := entryPrice + ((entryPrice - stopLoss) * rewardMultiplier)
+
+if finalSellSignal and not tradeOpen
+    tradeOpen := true
+    tradeSide := -1
+
+    entryPrice := close
+    stopLoss := close + (atr * riskATRMultiplier)
+
+    tp1 := entryPrice - ((stopLoss - entryPrice) * rewardMultiplier)
+
+//-------------------------
+// TRADE EXIT
+//-------------------------
+
+if tradeOpen
+
+    if tradeSide == 1 and close <= stopLoss
+        tradeOpen := false
+
+    if tradeSide == -1 and close >= stopLoss
+        tradeOpen := false
+
+//-------------------------
+// BUY / SELL LABELS
+//-------------------------
+
+plotshape(
+     finalBuySignal,
+     title="BUY",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=BUY_COLOR,
+     text="BUY",
+     textcolor=color.white,
+     size=size.small)
+
+plotshape(
+     finalSellSignal,
+     title="SELL",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=SELL_COLOR,
+     text="SELL",
+     textcolor=color.white,
+     size=size.small)
+
+//-------------------------
+// ENTRY & SL LINES
+//-------------------------
+
+plot(tradeOpen ? entryPrice : na, "Entry", color=color.white, linewidth=2)
+plot(tradeOpen ? stopLoss : na, "Stop Loss", color=color.red, linewidth=2)
+plot(tradeOpen ? tp1 : na, "TP1", color=color.lime, linewidth=2)
