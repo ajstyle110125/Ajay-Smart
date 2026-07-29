@@ -1,79 +1,43 @@
 //@version=6
-//====================================================
-// SMART AI CRYPTO PRO V4 - BUILD 1
-// Author : Ajay
-// Version : v4.0-beta Build-1
-//====================================================
-
-indicator(
-     title="Smart AI Crypto Pro v4",
-     shorttitle="SAICP v4",
-     overlay=true,
-     max_labels_count=500,
-     max_lines_count=500,
-     max_boxes_count=500)
+indicator("Smart AI Crypto Pro v4 Build1", shorttitle="SAICP v4 B1", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
 
 //====================================================
 // SECTION 01 - CORE ENGINE
 //====================================================
 
-//-------------------------
-// VERSION
-//-------------------------
-
-string VERSION = "v4.0-beta Build-1"
+// Version
+const string VERSION = "v4.0-beta Build1"
 
 //-------------------------
 // INPUT GROUPS
 //-------------------------
 
-string grpGeneral = "General"
-string grpTrend   = "Trend"
-string grpMomentum= "Momentum"
-string grpAI      = "AI"
-string grpRisk    = "Risk"
-string grpDisplay = "Display"
+string grpGeneral   = "General"
+string grpTrend     = "Trend Engine"
 
 //-------------------------
 // GENERAL SETTINGS
 //-------------------------
 
-showSignals =
-     input.bool(true,
-     "Show Buy / Sell",
-     group=grpGeneral)
-
-showDashboard =
-     input.bool(true,
-     "Show Dashboard",
-     group=grpGeneral)
-
-showDebug =
-     input.bool(false,
-     "Debug Mode",
-     group=grpGeneral)
+showSignals = input.bool(true, "Show Buy/Sell Signals", group=grpGeneral)
+showDebug   = input.bool(false, "Debug Mode", group=grpGeneral)
 
 //-------------------------
 // COLORS
 //-------------------------
 
-color BUY_COLOR   = color.lime
-color SELL_COLOR  = color.red
-color TP_COLOR    = color.green
-color SL_COLOR    = color.orange
-color TEXT_COLOR  = color.white
+BUY_COLOR  = color.lime
+SELL_COLOR = color.red
 
-//====================================================
+//-------------------------
 // GLOBAL VARIABLES
-//====================================================
+//-------------------------
 
 var bool tradeOpen = false
-
 var int tradeSide = 0
 
 var float entryPrice = na
-
-var float stopLoss = na
+var float stopLoss   = na
 
 var float tp1 = na
 var float tp2 = na
@@ -85,31 +49,24 @@ var float tp7 = na
 var float tp8 = na
 
 //====================================================
-// END OF SECTION 01
-//====================================================
-
-plot(close, title="Build1 Test", display=display.none)
-
-//====================================================
 // SECTION 02 - TREND ENGINE
 //====================================================
 
 //-------------------------
-// TREND INPUTS
+// INPUTS
 //-------------------------
 
-fastEMA = input.int(20, "Fast EMA", minval=1, group=grpTrend)
-slowEMA = input.int(50, "Slow EMA", minval=1, group=grpTrend)
-trendEMA = input.int(200, "Trend EMA", minval=1, group=grpTrend)
-
+fastEMA   = input.int(20, "Fast EMA", minval=1, group=grpTrend)
+slowEMA   = input.int(50, "Slow EMA", minval=1, group=grpTrend)
+trendEMA  = input.int(200, "Trend EMA", minval=1, group=grpTrend)
 atrLength = input.int(14, "ATR Length", minval=1, group=grpTrend)
 
 //-------------------------
 // CALCULATIONS
 //-------------------------
 
-emaFast = ta.ema(close, fastEMA)
-emaSlow = ta.ema(close, slowEMA)
+emaFast  = ta.ema(close, fastEMA)
+emaSlow  = ta.ema(close, slowEMA)
 emaTrend = ta.ema(close, trendEMA)
 
 atr = ta.atr(atrLength)
@@ -136,3 +93,7 @@ strongBearTrend = bearTrend and emaDistance > atr * 0.30
 plot(emaFast, title="EMA Fast", display=display.none)
 plot(emaSlow, title="EMA Slow", display=display.none)
 plot(emaTrend, title="EMA Trend", display=display.none)
+
+// Dummy plot (Build1 Compile Test)
+plot(close, title="Build1 Test", display=display.none)
+
