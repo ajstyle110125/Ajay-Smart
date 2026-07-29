@@ -1,1 +1,89 @@
+//@version=6
+//====================================================
+// SMART AI CRYPTO PRO V4 - BUILD 1
+// Author : Ajay
+// Version : v4.0-beta Build-1
+//====================================================
 
+indicator(
+     title="Smart AI Crypto Pro v4",
+     shorttitle="SAICP v4",
+     overlay=true,
+     max_labels_count=500,
+     max_lines_count=500,
+     max_boxes_count=500)
+
+//====================================================
+// SECTION 01 - CORE ENGINE
+//====================================================
+
+//-------------------------
+// VERSION
+//-------------------------
+
+string VERSION = "v4.0-beta Build-1"
+
+//-------------------------
+// INPUT GROUPS
+//-------------------------
+
+string grpGeneral = "General"
+string grpTrend   = "Trend"
+string grpMomentum= "Momentum"
+string grpAI      = "AI"
+string grpRisk    = "Risk"
+string grpDisplay = "Display"
+
+//-------------------------
+// GENERAL SETTINGS
+//-------------------------
+
+showSignals =
+     input.bool(true,
+     "Show Buy / Sell",
+     group=grpGeneral)
+
+showDashboard =
+     input.bool(true,
+     "Show Dashboard",
+     group=grpGeneral)
+
+showDebug =
+     input.bool(false,
+     "Debug Mode",
+     group=grpGeneral)
+
+//-------------------------
+// COLORS
+//-------------------------
+
+color BUY_COLOR   = color.lime
+color SELL_COLOR  = color.red
+color TP_COLOR    = color.green
+color SL_COLOR    = color.orange
+color TEXT_COLOR  = color.white
+
+//====================================================
+// GLOBAL VARIABLES
+//====================================================
+
+var bool tradeOpen = false
+
+var int tradeSide = 0
+
+var float entryPrice = na
+
+var float stopLoss = na
+
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var float tp4 = na
+var float tp5 = na
+var float tp6 = na
+var float tp7 = na
+var float tp8 = na
+
+//====================================================
+// END OF SECTION 01
+//====================================================
