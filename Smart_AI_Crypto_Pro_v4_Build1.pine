@@ -97,3 +97,94 @@ plot(emaTrend, title="EMA Trend", display=display.none)
 // Dummy plot (Build1 Compile Test)
 plot(close, title="Build1 Test", display=display.none)
 
+//====================================================
+// SECTION 03 - MOMENTUM ENGINE
+//====================================================
+
+//-------------------------
+// INPUTS
+//-------------------------
+
+string grpMomentum = "Momentum Engine"
+
+rsiLength = input.int(14, "RSI Length", minval=2, group=grpMomentum)
+
+macdFastLength = input.int(12, "MACD Fast", minval=1, group=grpMomentum)
+macdSlowLength = input.int(26, "MACD Slow", minval=1, group=grpMomentum)
+macdSignalLength = input.int(9, "MACD Signal", minval=1, group=grpMomentum)
+
+volumeLength = input.int(20, "Volume MA", minval=1, group=grpMomentum)
+
+//-------------------------
+// RSI
+//-------------------------
+
+rsi = ta.rsi(close, rsiLength)
+
+bullRSI = rsi > 55
+bearRSI = rsi < 45
+
+//-------------------------
+// MACD
+//-------------------------
+
+[macdLine, signalLine, histLine] = ta.macd(close, macdFastLength, macdSlowLength, macdSignalLength)
+
+bullMACD = macdLine > signalLine
+bearMACD = macdLine < signalLine
+
+//-------------------------
+// VOLUME
+//-------------------------
+
+volumeMA = ta.sma(volume, volumeLength)
+
+highVolume = volume > volumeMA
+
+//-------------------------
+// MOMENTUM SCORE
+//-------------------------
+
+int bullMomentumScore = 0
+int bearMomentumScore = 0
+
+if bullRSI
+    bullMomentumScore += 25
+
+if bullMACD
+    bullMomentumScore += 25
+
+if highVolume
+    bullMomentumScore += 25
+
+if strongBullTrend
+    bullMomentumScore += 25
+
+if bearRSI
+    bearMomentumScore += 25
+
+if bearMACD
+    bearMomentumScore += 25
+
+if highVolume
+    bearMomentumScore += 25
+
+if strongBearTrend
+    bearMomentumScore += 25
+
+//-------------------------
+// FINAL MOMENTUM
+//-------------------------
+
+bullMomentum = bullMomentumScore >= 75
+bearMomentum = bearMomentumScore >= 75
+
+//-------------------------
+// HIDDEN PLOTS
+//-------------------------
+
+plot(rsi, title="RSI", display=display.none)
+plot(macdLine, title="MACD", display=display.none)
+plot(signalLine, title="MACD Signal", display=display.none)
+plot(histLine, title="MACD Histogram", display=display.none)
+
