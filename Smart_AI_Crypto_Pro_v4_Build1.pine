@@ -188,3 +188,77 @@ plot(macdLine, title="MACD", display=display.none)
 plot(signalLine, title="MACD Signal", display=display.none)
 plot(histLine, title="MACD Histogram", display=display.none)
 
+//====================================================
+// SECTION 04 - AI SCORING ENGINE
+//====================================================
+
+//-------------------------
+// INPUTS
+//-------------------------
+
+string grpAI = "AI Engine"
+
+minimumAIScore = input.int(70, "Minimum AI Score", minval=50, maxval=100, group=grpAI)
+
+//-------------------------
+// AI SCORES
+//-------------------------
+
+int aiBuyScore = 0
+int aiSellScore = 0
+
+// Trend Score
+if strongBullTrend
+    aiBuyScore += 30
+
+if strongBearTrend
+    aiSellScore += 30
+
+// Momentum Score
+if bullMomentum
+    aiBuyScore += 30
+
+if bearMomentum
+    aiSellScore += 30
+
+// EMA Cross
+if bullCross
+    aiBuyScore += 20
+
+if bearCross
+    aiSellScore += 20
+
+// Candle Confirmation
+bullCandle = close > open
+bearCandle = close < open
+
+if bullCandle
+    aiBuyScore += 20
+
+if bearCandle
+    aiSellScore += 20
+
+//-------------------------
+// AI SIGNALS
+//-------------------------
+
+buySignal = aiBuyScore >= minimumAIScore
+sellSignal = aiSellScore >= minimumAIScore
+
+//-------------------------
+// AI RATING
+//-------------------------
+
+string aiRating = "NEUTRAL"
+
+if buySignal
+    aiRating := "BUY"
+else if sellSignal
+    aiRating := "SELL"
+
+//-------------------------
+// HIDDEN PLOTS
+//-------------------------
+
+plot(aiBuyScore, title="AI Buy Score", display=display.none)
+plot(aiSellScore, title="AI Sell Score", display=display.none)
