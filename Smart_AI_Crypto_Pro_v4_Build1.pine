@@ -364,37 +364,61 @@ smcBuyOK = not useSMCFilter or bullSMC
 smcSellOK = not useSMCFilter or bearSMC
 
 //-------------------------
+// SIGNAL SCORE
+//-------------------------
+
+int buyScore = 0
+int sellScore = 0
+
+if trendBuyOK
+    buyScore += 30
+
+if trendSellOK
+    sellScore += 30
+
+if momentumBuyOK
+    buyScore += 25
+
+if momentumSellOK
+    sellScore += 25
+
+if smcBuyOK
+    buyScore += 20
+
+if smcSellOK
+    sellScore += 20
+
+if bullCross
+    buyScore += 15
+
+if bearCross
+    sellScore += 15
+
+if close > open
+    buyScore += 10
+
+if close < open
+    sellScore += 10
+
+//-------------------------
 // FINAL SIGNALS
 //-------------------------
 
-finalBuySignal =
-     buySignal and
-     trendBuyOK and
-     momentumBuyOK and
-     smcBuyOK
-
-finalSellSignal =
-     sellSignal and
-     trendSellOK and
-     momentumSellOK and
-     smcSellOK
+finalBuySignal = buyScore >= 60
+finalSellSignal = sellScore >= 60
 
 //-------------------------
 // SIGNAL STRENGTH
 //-------------------------
 
-int signalStrength = 0
-
-if finalBuySignal
-    signalStrength := aiBuyScore + smcBuyScore
-
-if finalSellSignal
-    signalStrength := aiSellScore + smcSellScore
+signalStrength = math.max(buyScore, sellScore)
 
 //-------------------------
-// HIDDEN PLOTS
+// DEBUG PLOTS
 //-------------------------
 
+plot(buyScore, title="Buy Score", display=display.none)
+plot(sellScore, title="Sell Score", display=display.none)
 plot(signalStrength, title="Signal Strength", display=display.none)
 //====================================================
 // SECTION 07 - PROFESSIONAL TRADE ENGINE
