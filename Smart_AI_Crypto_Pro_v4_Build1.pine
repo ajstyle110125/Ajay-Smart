@@ -87,3 +87,5 @@ var float tp8 = na
 //====================================================
 // END OF SECTION 01
 //====================================================
+
+plot(close, title="Build1 Test", display=display.none)
