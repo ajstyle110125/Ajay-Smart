@@ -1,0 +1,367 @@
+//@version=6
+indicator("Smart AI Crypto Pro v5", shorttitle="SAICP v5", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+//==================================================
+// SMART AI CRYPTO PRO V5
+// Professional Edition
+// Author : Ajay
+//==================================================
+
+//==============================
+// VERSION
+//==============================
+
+string VERSION = "v5.0 Build-01"
+
+//==============================
+// INPUT GROUPS
+//==============================
+
+string grpSignal = "Signal Engine"
+string grpTrade  = "Trade Engine"
+string grpRisk   = "Risk Management"
+string grpVisual = "Chart Display"
+
+//==============================
+// USER INPUTS
+//==============================
+
+bool showBuySell = input.bool(true, "Show Buy / Sell", group=grpVisual)
+bool showTradeZone = input.bool(true, "Show Long / Short Zone", group=grpVisual)
+bool showTargets = input.bool(true, "Show TP Levels", group=grpVisual)
+
+float riskReward = input.float(2.0, "Risk Reward", minval=1.0, step=0.5, group=grpRisk)
+
+//==============================
+// COLORS
+//==============================
+
+color BUY_COLOR   = color.lime
+color SELL_COLOR  = color.red
+color LONG_COLOR  = color.new(color.green, 85)
+color SHORT_COLOR = color.new(color.red, 85)
+color TP_COLOR    = color.green
+color SL_COLOR    = color.red
+
+//==============================
+// TRADE STATE
+//==============================
+
+// 0 = No Trade
+// 1 = Buy Active
+// -1 = Sell Active
+
+var int tradeState = 0
+
+var float entryPrice = na
+var float stopLoss   = na
+
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var float tp4 = na
+var float tp5 = na
+var float tp6 = na
+
+//==============================
+// DRAWING OBJECTS
+//==============================
+
+
+var line slLine  = na
+var line tp1Line = na
+var line tp2Line = na
+var line tp3Line = na
+var line tp4Line = na
+var line tp5Line = na
+var line tp6Line = na
+
+//==================================================
+// MARKET STRUCTURE ENGINE
+// BUILD-02
+//==================================================
+
+// Swing Length
+int swingLength = 5
+
+// Detect Swing High / Low
+float swingHigh = ta.pivothigh(high, swingLength, swingLength)
+float swingLow  = ta.pivotlow(low, swingLength, swingLength)
+
+// Store latest confirmed swings
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+
+if not na(swingHigh)
+    lastSwingHigh := swingHigh
+
+if not na(swingLow)
+    lastSwingLow := swingLow
+
+// Trend State
+var bool bullishStructure = false
+var bool bearishStructure = false
+
+bullishStructure := not na(lastSwingHigh) and close > lastSwingHigh
+bearishStructure := not na(lastSwingLow) and close < lastSwingLow  
+
+//==================================================
+// BUILD-05 : SMART TREND ENGINE
+//==================================================
+
+// Fast / Slow EMA (Backend Only)
+fastEMA = ta.ema(close, 20)
+slowEMA = ta.ema(close, 50)
+trendEMA = ta.ema(close, 200)
+
+// Trend Direction
+bool emaBull = fastEMA > slowEMA
+bool emaBear = fastEMA < slowEMA
+
+// Higher Trend
+bool majorBull = close > trendEMA
+bool majorBear = close < trendEMA
+
+// Trend Strength
+float atr = ta.atr(14)
+
+bool strongBull =
+     emaBull and
+     majorBull and
+     close > fastEMA and
+     (close - open) > atr * 0.20
+
+bool strongBear =
+     emaBear and
+     majorBear and
+     close < fastEMA and
+     (open - close) > atr * 0.20
+
+
+//==================================================
+// BUILD-06 : SMART SWING ENGINE
+//==================================================
+
+// Recent Swing Range
+float recentHigh = ta.highest(high, 20)
+float recentLow  = ta.lowest(low, 20)
+
+// Swing Range
+float swingRange = recentHigh - recentLow
+
+// Equilibrium
+float equilibrium = recentLow + swingRange * 0.50
+
+// Premium / Discount
+bool inDiscount = close <= recentLow + swingRange * 0.30
+bool inPremium  = close >= recentHigh - swingRange * 0.30
+
+// Near Swing Extremes
+bool nearBottom = low <= recentLow + atr * 0.25
+bool nearTop    = high >= recentHigh - atr * 0.25
+
+// Rejection Candle
+bool bullRejection =
+     close > open and
+     low < low[1] and
+     close > low + (high - low) * 0.60
+
+bool bearRejection =
+     close < open and
+     high > high[1] and
+     close < high - (high - low) * 0.60
+
+
+//==================================================
+// BUILD-07 : SMART LIQUIDITY ENGINE
+//==================================================
+
+// Previous Liquidity Levels
+float prevHigh = ta.highest(high, 10)[1]
+float prevLow  = ta.lowest(low, 10)[1]
+
+// Liquidity Sweep
+bool bullLiquiditySweep =
+     low < prevLow and
+     close > prevLow
+
+bool bearLiquiditySweep =
+     high > prevHigh and
+     close < prevHigh
+
+// Strong Momentum Candle
+float bodySize = math.abs(close - open)
+float candleRange = high - low
+
+bool strongBullCandle =
+     close > open and
+     bodySize > candleRange * 0.60
+
+bool strongBearCandle =
+     close < open and
+     bodySize > candleRange * 0.60
+
+// Smart Reversal
+bool smartBullReversal =
+     nearBottom and
+     bullRejection and
+     bullLiquiditySweep and
+     strongBullCandle
+
+bool smartBearReversal =
+     nearTop and
+     bearRejection and
+     bearLiquiditySweep and
+     strongBearCandle
+
+
+//==================================================
+// BUILD-13 : DYNAMIC AI SCORE ENGINE
+//==================================================
+
+// Reset Score
+int buyScore = 0
+int sellScore = 0
+
+// Trend
+buyScore += strongBull ? 20 : 0
+sellScore += strongBear ? 20 : 0
+
+// Structure
+buyScore += bullishStructure ? 15 : 0
+sellScore += bearishStructure ? 15 : 0
+
+// Swing Position
+buyScore += nearBottom ? 20 : 0
+sellScore += nearTop ? 20 : 0
+
+// Liquidity
+buyScore += bullLiquiditySweep ? 15 : 0
+sellScore += bearLiquiditySweep ? 15 : 0
+
+// Rejection
+buyScore += bullRejection ? 15 : 0
+sellScore += bearRejection ? 15 : 0
+
+// Momentum
+buyScore += strongBullCandle ? 15 : 0
+sellScore += strongBearCandle ? 15 : 0
+
+// Cap Score
+buyScore := math.min(buyScore, 100)
+sellScore := math.min(sellScore, 100)
+//==================================================
+// BUILD-09 : FINAL SIGNAL ENGINE
+//==================================================
+
+// Dynamic Threshold
+int buyThreshold =
+     timeframe.isminutes and timeframe.multiplier <= 5 ? 35 :
+     timeframe.isminutes and timeframe.multiplier <= 15 ? 40 : 45
+
+int sellThreshold =
+     timeframe.isminutes and timeframe.multiplier <= 5 ? 35 :
+     timeframe.isminutes and timeframe.multiplier <= 15 ? 40 : 45
+
+// BUY READY
+// BUY READY
+bool longReady = (
+    smartBullReversal or
+    (nearBottom and bullRejection) or
+    (bullLiquiditySweep and strongBullCandle)
+) and emaBull and (buyScore >= buyThreshold)
+
+// SELL READY
+bool shortReady = (
+    smartBearReversal or
+    (nearTop and bearRejection) or
+    (bearLiquiditySweep and strongBearCandle)
+) and emaBear and (sellScore >= sellThreshold)
+
+// Final Signal
+bool buySignal  = longReady  and tradeState != 1
+bool sellSignal = shortReady and tradeState != -1
+
+// Update Trade State
+if buySignal
+    tradeState := 1
+    entryPrice := close
+
+if sellSignal
+    tradeState := -1
+    entryPrice := close
+
+// BUY
+plotshape(
+     series=showBuySell and buySignal,
+     title="BUY",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=BUY_COLOR,
+     text="BUY",
+     textcolor=color.black,
+     size=size.small)
+
+// SELL
+plotshape(
+     series=showBuySell and sellSignal,
+     title="SELL",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=SELL_COLOR,
+     text="SELL",
+     textcolor=color.white,
+     size=size.small)
+//==================================================
+// BUILD-11 : TRADE LOCK ENGINE
+//==================================================
+
+// Trade Locks
+var bool buyLock  = false
+var bool sellLock = false
+
+// Reset Locks on Opposite Signal
+if buySignal
+    buyLock := true
+    sellLock := false
+
+if sellSignal
+    sellLock := true
+    buyLock := false
+
+// Final Signals
+buySignal := buySignal and not buyLock[1]
+sellSignal := sellSignal and not sellLock[1]
+
+// Update Trade State
+if buySignal
+    tradeState := 1
+    entryPrice := close
+
+if sellSignal
+    tradeState := -1
+    entryPrice := close
+
+
+//==================================================
+// BUILD-10 : ADAPTIVE TIMEFRAME ENGINE
+//==================================================
+
+// Current Timeframe
+bool tf1m  = timeframe.period == "1"
+bool tf3m  = timeframe.period == "3"
+bool tf5m  = timeframe.period == "5"
+bool tf10m = timeframe.period == "10"
+bool tf15m = timeframe.period == "15"
+bool tf30m = timeframe.period == "30"
+bool tf1h  = timeframe.period == "60"
+
+// Dynamic AI Score Threshold
+int signalThreshold =
+     tf1m  ? 50 :
+     tf3m  ? 52 :
+     tf5m  ? 55 :
+     tf10m ? 58 :
+     tf15m ? 60 :
+     tf30m ? 62 :
+     tf1h  ? 65 : 60
