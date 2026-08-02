@@ -1,0 +1,1691 @@
+//@version=6
+indicator("Smart AI Crypto Pro v5", shorttitle="SAICP v5", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+//==================================================
+// SMART AI CRYPTO PRO V5
+// Professional Edition
+// Author : Ajay
+//==================================================
+
+//==============================
+// VERSION
+//==============================
+
+string VERSION = "v5.0 Build-01"
+
+//==============================
+// INPUT GROUPS
+//==============================
+
+string grpSignal = "Signal Engine"
+string grpTrade  = "Trade Engine"
+string grpRisk   = "Risk Management"
+string grpVisual = "Chart Display"
+
+//==============================
+// USER INPUTS
+//==============================
+
+bool showBuySell = input.bool(true, "Show Buy / Sell", group=grpVisual)
+bool showTradeZone = input.bool(true, "Show Long / Short Zone", group=grpVisual)
+bool showTargets = input.bool(true, "Show TP Levels", group=grpVisual)
+
+float riskReward = input.float(2.0, "Risk Reward", minval=1.0, step=0.5, group=grpRisk)
+
+//==============================
+// COLORS
+//==============================
+
+color BUY_COLOR   = color.lime
+color SELL_COLOR  = color.red
+color LONG_COLOR  = color.new(color.green, 85)
+color SHORT_COLOR = color.new(color.red, 85)
+color TP_COLOR    = color.green
+color SL_COLOR    = color.red
+
+//==============================
+// TRADE STATE
+//==============================
+
+// 0 = No Trade
+// 1 = Buy Active
+// -1 = Sell Active
+
+var int tradeState = 0
+
+var float entryPrice = na
+var float stopLoss   = na
+
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var float tp4 = na
+var float tp5 = na
+var float tp6 = na
+
+//==============================
+// DRAWING OBJECTS
+//==============================
+
+
+var line slLine  = na
+var line tp1Line = na
+var line tp2Line = na
+var line tp3Line = na
+var line tp4Line = na
+var line tp5Line = na
+var line tp6Line = na
+
+//==================================================
+// MARKET STRUCTURE ENGINE
+// BUILD-02
+//==================================================
+
+// Swing Length
+int swingLength = 5
+
+// Detect Swing High / Low
+float swingHigh = ta.pivothigh(high, swingLength, swingLength)
+float swingLow  = ta.pivotlow(low, swingLength, swingLength)
+
+// Store latest confirmed swings
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+
+if not na(swingHigh)
+    lastSwingHigh := swingHigh
+
+if not na(swingLow)
+    lastSwingLow := swingLow
+
+// Trend State
+var bool bullishStructure = false
+var bool bearishStructure = false
+
+bullishStructure := not na(lastSwingHigh) and close > lastSwingHigh
+bearishStructure := not na(lastSwingLow) and close < lastSwingLow  
+
+//==================================================
+// BUILD-05 : SMART TREND ENGINE
+//==================================================
+
+// Fast / Slow EMA (Backend Only)
+fastEMA = ta.ema(close, 20)
+slowEMA = ta.ema(close, 50)
+trendEMA = ta.ema(close, 200)
+
+// Trend Direction
+bool emaBull = fastEMA > slowEMA
+bool emaBear = fastEMA < slowEMA
+
+// Higher Trend
+bool majorBull = close > trendEMA
+bool majorBear = close < trendEMA
+
+// Trend Strength
+float atr = ta.atr(14)
+
+bool strongBull =
+     emaBull and
+     majorBull and
+     close > fastEMA and
+     (close - open) > atr * 0.20
+
+bool strongBear =
+     emaBear and
+     majorBear and
+     close < fastEMA and
+     (open - close) > atr * 0.20
+
+
+//==================================================
+// BUILD-06 : SMART SWING ENGINE
+//==================================================
+
+// Recent Swing Range
+float recentHigh = ta.highest(high, 20)
+float recentLow  = ta.lowest(low, 20)
+
+// Swing Range
+float swingRange = recentHigh - recentLow
+
+// Equilibrium
+float equilibrium = recentLow + swingRange * 0.50
+
+// Premium / Discount
+bool inDiscount = close <= recentLow + swingRange * 0.30
+bool inPremium  = close >= recentHigh - swingRange * 0.30
+
+// Near Swing Extremes
+bool nearBottom = low <= recentLow + atr * 0.25
+bool nearTop    = high >= recentHigh - atr * 0.25
+
+// Rejection Candle
+bool bullRejection =
+     close > open and
+     low < low[1] and
+     close > low + (high - low) * 0.60
+
+bool bearRejection =
+     close < open and
+     high > high[1] and
+     close < high - (high - low) * 0.60
+
+
+//==================================================
+// BUILD-07 : SMART LIQUIDITY ENGINE
+//==================================================
+
+// Previous Liquidity Levels
+float prevHigh = ta.highest(high, 10)[1]
+float prevLow  = ta.lowest(low, 10)[1]
+
+// Liquidity Sweep
+bool bullLiquiditySweep =
+     low < prevLow and
+     close > prevLow
+
+bool bearLiquiditySweep =
+     high > prevHigh and
+     close < prevHigh
+
+// Strong Momentum Candle
+float bodySize = math.abs(close - open)
+float candleRange = high - low
+
+bool strongBullCandle =
+     close > open and
+     bodySize > candleRange * 0.60
+
+bool strongBearCandle =
+     close < open and
+     bodySize > candleRange * 0.60
+
+// Smart Reversal
+bool smartBullReversal =
+     nearBottom and
+     bullRejection and
+     bullLiquiditySweep and
+     strongBullCandle
+
+bool smartBearReversal =
+     nearTop and
+     bearRejection and
+     bearLiquiditySweep and
+     strongBearCandle
+
+
+//==================================================
+// BUILD-13 : DYNAMIC AI SCORE ENGINE
+//==================================================
+
+// Reset Score
+int buyScore = 0
+int sellScore = 0
+
+// Trend
+buyScore += strongBull ? 20 : 0
+sellScore += strongBear ? 20 : 0
+
+// Structure
+buyScore += bullishStructure ? 15 : 0
+sellScore += bearishStructure ? 15 : 0
+
+// Swing Position
+buyScore += nearBottom ? 20 : 0
+sellScore += nearTop ? 20 : 0
+
+// Liquidity
+buyScore += bullLiquiditySweep ? 15 : 0
+sellScore += bearLiquiditySweep ? 15 : 0
+
+// Rejection
+buyScore += bullRejection ? 15 : 0
+sellScore += bearRejection ? 15 : 0
+
+// Momentum
+buyScore += strongBullCandle ? 15 : 0
+sellScore += strongBearCandle ? 15 : 0
+
+// Cap Score
+buyScore := math.min(buyScore, 100)
+sellScore := math.min(sellScore, 100)
+//==================================================
+// BUILD-09 : FINAL SIGNAL ENGINE
+//==================================================
+
+// Dynamic Threshold
+int buyThreshold = timeframe.isminutes ? (timeframe.multiplier <= 5 ? 35 : timeframe.multiplier <= 15 ? 40 : 45) : 45
+int sellThreshold = timeframe.isminutes ? (timeframe.multiplier <= 5 ? 35 : timeframe.multiplier <= 15 ? 40 : 45) : 45
+
+// Ready Conditions
+bool longReady  = smartBullReversal or (nearBottom and bullRejection) or (bullLiquiditySweep and strongBullCandle)
+bool shortReady = smartBearReversal or (nearTop and bearRejection) or (bearLiquiditySweep and strongBearCandle)
+
+// Final Signals
+bool buySignal  = longReady and emaBull and buyScore >= buyThreshold and tradeState != 1
+bool sellSignal = shortReady and emaBear and sellScore >= sellThreshold and tradeState != -1
+
+// Update Trade State
+if buySignal
+    tradeState := 1
+    entryPrice := close
+
+if sellSignal
+    tradeState := -1
+    entryPrice := close
+
+// Plot BUY
+plotshape(
+     buySignal and showBuySell,
+     title="BUY",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=BUY_COLOR,
+     text="BUY",
+     textcolor=color.black,
+     size=size.small)
+
+// Plot SELL
+plotshape(
+     sellSignal and showBuySell,
+     title="SELL",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=SELL_COLOR,
+     text="SELL",
+     textcolor=color.white,
+     size=size.small)
+
+//==================================================
+// BUILD-10 : ADAPTIVE TIMEFRAME ENGINE 
+//==================================================
+
+// Current Timeframe
+bool tf1m  = timeframe.period == "1"
+bool tf3m  = timeframe.period == "3"
+bool tf5m  = timeframe.period == "5"
+bool tf10m = timeframe.period == "10"
+bool tf15m = timeframe.period == "15"
+bool tf30m = timeframe.period == "30"
+bool tf1h  = timeframe.period == "60"
+
+// Dynamic AI Score Threshold
+int signalThreshold =
+     tf1m  ? 50 :
+     tf3m  ? 52 :
+     tf5m  ? 55 :
+     tf10m ? 58 :
+     tf15m ? 60 :
+     tf30m ? 62 :
+     tf1h  ? 65 : 60
+//==================================================
+// BUILD-12 : REVERSAL ALERT ENGINE
+//==================================================
+
+// Reversal Setup
+bool bullishAlert =
+     nearBottom and
+     bullRejection and
+     not buySignal
+
+bool bearishAlert =
+     nearTop and
+     bearRejection and
+     not sellSignal
+
+// Plot Reversal Alert
+plotshape(
+     bullishAlert,
+     title="BUY ALERT",
+     style=shape.circle,
+     location=location.belowbar,
+     color=color.yellow,
+     size=size.tiny)
+
+plotshape(
+     bearishAlert,
+     title="SELL ALERT",
+     style=shape.circle,
+     location=location.abovebar,
+     color=color.orange,
+     size=size.tiny)
+
+// TradingView Alerts
+alertcondition(
+     bullishAlert,
+     title="Bullish Reversal Alert",
+     message="Possible BUY reversal forming")
+
+alertcondition(
+     bearishAlert,
+     title="Bearish Reversal Alert",
+     message="Possible SELL reversal forming")
+
+//==================================================
+// BUILD-13 : SMART REVERSAL PREDICTION ENGINE
+//==================================================
+
+// Early Reversal Conditions
+bool possibleBuyReversal =
+     nearBottom and
+     (bullLiquiditySweep or bullRejection)
+
+bool possibleSellReversal =
+     nearTop and
+     (bearLiquiditySweep or bearRejection)
+
+// Confirmation
+bool confirmedBuy =
+     possibleBuyReversal and
+     strongBullCandle
+
+bool confirmedSell =
+     possibleSellReversal and
+     strongBearCandle
+
+// Alert Plot
+plotshape(
+     confirmedBuy,
+     title="BUY ALERT",
+     style=shape.triangleup,
+     location=location.belowbar,
+     color=color.yellow,
+     size=size.tiny,
+     text="ALERT")
+
+plotshape(
+     confirmedSell,
+     title="SELL ALERT",
+     style=shape.triangledown,
+     location=location.abovebar,
+     color=color.orange,
+     size=size.tiny,
+     text="ALERT")
+
+// TradingView Alerts
+alertcondition(
+     confirmedBuy,
+     title="BUY Reversal Alert",
+     message="Possible BUY reversal detected")
+
+alertcondition(
+     confirmedSell,
+     title="SELL Reversal Alert",
+     message="Possible SELL reversal detected")
+
+
+//==================================================
+// BUILD-14 : FINAL EXECUTION ENGINE
+//==================================================
+
+// Final Strong Signals
+bool finalBuySignal =
+     buySignal and
+     confirmedBuy and
+     buyScore >= buyThreshold
+
+bool finalSellSignal =
+     sellSignal and
+     confirmedSell and
+     sellScore >= sellThreshold
+
+// Execute Trade State
+if finalBuySignal
+    tradeState := 1
+    entryPrice := close
+
+if finalSellSignal
+    tradeState := -1
+    entryPrice := close
+
+// Final BUY
+plotshape(
+     series=showBuySell and finalBuySignal,
+     title="FINAL BUY",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.lime,
+     text="BUY",
+     textcolor=color.black,
+     size=size.normal)
+
+// Final SELL
+plotshape(
+     series=showBuySell and finalSellSignal,
+     title="FINAL SELL",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=color.red,
+     text="SELL",
+     textcolor=color.white,
+     size=size.normal)
+
+// TradingView Alerts
+alertcondition(
+     finalBuySignal,
+     title="BUY Signal",
+     message="Smart AI Crypto Pro : BUY")
+
+alertcondition(
+     finalSellSignal,
+     title="SELL Signal",
+     message="Smart AI Crypto Pro : SELL")
+
+
+//==================================================
+// BUILD-15 : SMART TOP / BOTTOM DETECTOR
+//==================================================
+
+// Pivot Detection
+float pivotHigh = ta.pivothigh(high, 3, 3)
+float pivotLow  = ta.pivotlow(low, 3, 3)
+
+// Store Latest Pivot
+var float lastPivotHigh = na
+var float lastPivotLow  = na
+
+if not na(pivotHigh)
+    lastPivotHigh := pivotHigh
+
+if not na(pivotLow)
+    lastPivotLow := pivotLow
+
+// Distance Filter
+float atrValue = ta.atr(14)
+
+bool bottomZone =
+     not na(lastPivotLow) and
+     low <= lastPivotLow + atrValue * 0.30
+
+bool topZone =
+     not na(lastPivotHigh) and
+     high >= lastPivotHigh - atrValue * 0.30
+
+// Strong Bottom
+bool strongBottom =
+     bottomZone and
+     bullRejection and
+     strongBullCandle
+
+// Strong Top
+bool strongTop =
+     topZone and
+     bearRejection and
+     strongBearCandle
+
+// Reversal Marker
+plotshape(
+     strongBottom,
+     title="BOTTOM",
+     style=shape.circle,
+     location=location.belowbar,
+     color=color.aqua,
+     size=size.tiny)
+
+plotshape(
+     strongTop,
+     title="TOP",
+     style=shape.circle,
+     location=location.abovebar,
+     color=color.fuchsia,
+     size=size.tiny)
+
+
+//==================================================
+// BUILD-16 : SMART LIQUIDITY FILTER
+//==================================================
+
+// Swing Failure Detection
+bool swingFailureBuy =
+     low < ta.lowest(low, 5)[1] and
+     close > ta.lowest(low, 5)[1]
+
+bool swingFailureSell =
+     high > ta.highest(high, 5)[1] and
+     close < ta.highest(high, 5)[1]
+
+// Volume Filter
+float avgVolume = ta.sma(volume, 20)
+
+bool highVolume =
+     volume > avgVolume
+
+// Final Liquidity Conditions
+bool liquidityBuy =
+     swingFailureBuy and
+     highVolume
+
+bool liquiditySell =
+     swingFailureSell and
+     highVolume
+
+// Improved Signals
+bool eliteBuy =
+     finalBuySignal and
+     liquidityBuy
+
+bool eliteSell =
+     finalSellSignal and
+     liquiditySell
+
+// Plot Elite Signals
+plotshape(
+     eliteBuy,
+     title="BUY",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.lime,
+     text="BUY",
+     textcolor=color.black,
+     size=size.normal)
+
+plotshape(
+     eliteSell,
+     title="SELL",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=color.red,
+     text="SELL",
+     textcolor=color.white,
+     size=size.normal)
+
+// Alerts
+alertcondition(
+     eliteBuy,
+     title="Elite BUY",
+     message="Elite BUY Signal")
+
+alertcondition(
+     eliteSell,
+     title="Elite SELL",
+     message="Elite SELL Signal")
+
+
+//==================================================
+// BUILD-17 : SMART MARKET STRUCTURE ENGINE
+//==================================================
+
+// Swing Length
+int msLen = 3
+
+// Market Swings
+float msHigh = ta.pivothigh(high, msLen, msLen)
+float msLow  = ta.pivotlow(low, msLen, msLen)
+
+// Last Confirmed Swings
+var float marketHigh = na
+var float marketLow  = na
+
+if not na(msHigh)
+    marketHigh := msHigh
+
+if not na(msLow)
+    marketLow := msLow
+
+//==================================================
+// BOS
+//==================================================
+
+bool bullishBOS =
+     not na(marketHigh) and
+     close > marketHigh
+
+bool bearishBOS =
+     not na(marketLow) and
+     close < marketLow
+
+//==================================================
+// CHOCH
+//==================================================
+
+bool bullishCHOCH =
+     bearishStructure and
+     bullishBOS
+
+bool bearishCHOCH =
+     bullishStructure and
+     bearishBOS
+
+//==================================================
+// AI Confirmation
+//==================================================
+
+buyScore += bullishCHOCH ? 10 : 0
+sellScore += bearishCHOCH ? 10 : 0
+
+buyScore += bullishBOS ? 5 : 0
+sellScore += bearishBOS ? 5 : 0
+
+//==================================================
+// Final Upgrade
+//==================================================
+
+buyScore := math.min(buyScore,100)
+sellScore := math.min(sellScore,100)
+
+//==================================================
+// BUILD-18 : SMART ORDER BLOCK + FVG ENGINE
+//==================================================
+
+//==============================
+// ORDER BLOCK
+//==============================
+
+// Bullish Order Block
+bool bullOrderBlock =
+     close[1] < open[1] and
+     close > high[1]
+
+// Bearish Order Block
+bool bearOrderBlock =
+     close[1] > open[1] and
+     close < low[1]
+
+//==============================
+// FAIR VALUE GAP (3 Candle)
+//==============================
+
+// Bullish FVG
+bool bullFVG =
+     low > high[2]
+
+// Bearish FVG
+bool bearFVG =
+     high < low[2]
+
+//==============================
+// AI SCORE UPDATE
+//==============================
+
+// Order Block
+if bullOrderBlock
+    buyScore += 10
+
+if bearOrderBlock
+    sellScore += 10
+
+// Fair Value Gap
+if bullFVG
+    buyScore += 10
+
+if bearFVG
+    sellScore += 10
+
+// Cap Score
+buyScore := math.min(buyScore, 100)
+sellScore := math.min(sellScore, 100)
+
+//==============================
+// SMART MONEY CONFIRMATION
+//==============================
+
+bool smartMoneyBuy =
+     bullOrderBlock and
+     bullFVG and
+     liquidityBuy
+
+bool smartMoneySell =
+     bearOrderBlock and
+     bearFVG and
+     liquiditySell
+
+// Final Upgrade
+buyScore += smartMoneyBuy ? 10 : 0
+sellScore += smartMoneySell ? 10 : 0
+
+buyScore := math.min(buyScore, 100)
+sellScore := math.min(sellScore, 100)
+
+//==================================================
+// BUILD-19 : AI CONFIRMATION ENGINE
+//==================================================
+
+// Trend Strength
+float trendStrength =
+     math.abs(fastEMA - slowEMA) / ta.atr(14)
+
+// EMA Slope
+bool emaSlopeBull = fastEMA > fastEMA[1]
+bool emaSlopeBear = fastEMA < fastEMA[1]
+
+// Strong Trend Filter
+bool strongTrendBuy =
+     trendStrength > 0.30 and
+     emaSlopeBull
+
+bool strongTrendSell =
+     trendStrength > 0.30 and
+     emaSlopeBear
+
+// Multi Bar Confirmation
+bool buyConfirmation =
+     close > high[1]
+
+bool sellConfirmation =
+     close < low[1]
+
+// Final AI Confirmation
+bool aiBuyConfirmed =
+     eliteBuy and
+     strongTrendBuy and
+     buyConfirmation
+
+bool aiSellConfirmed =
+     eliteSell and
+     strongTrendSell and
+     sellConfirmation
+
+// AI Score Upgrade
+if aiBuyConfirmed
+    buyScore += 15
+
+if aiSellConfirmed
+    sellScore += 15
+
+buyScore := math.min(buyScore,100)
+sellScore := math.min(sellScore,100)
+
+// Final Confidence
+bool highConfidenceBuy =
+     aiBuyConfirmed and
+     buyScore >= 80
+
+bool highConfidenceSell =
+     aiSellConfirmed and
+     sellScore >= 80
+
+// High Confidence Labels
+plotshape(
+     highConfidenceBuy,
+     title="HIGH BUY",
+     style=shape.triangleup,
+     location=location.belowbar,
+     color=color.green,
+     size=size.small)
+
+plotshape(
+     highConfidenceSell,
+     title="HIGH SELL",
+     style=shape.triangledown,
+     location=location.abovebar,
+     color=color.red,
+     size=size.small)
+
+    //==================================================
+// BUILD-20 : FINAL DISPLAY ENGINE
+//==================================================
+
+//==============================
+// FINAL SIGNALS
+//==============================
+
+bool finalBuy =
+     highConfidenceBuy and
+     tradeState != 1
+
+bool finalSell =
+     highConfidenceSell and
+     tradeState != -1
+
+bool reversalAlert =
+     (confirmedBuy and not finalBuy) or
+     (confirmedSell and not finalSell)
+
+//==============================
+// UPDATE TRADE
+//==============================
+
+if finalBuy
+    tradeState := 1
+    entryPrice := close
+
+if finalSell
+    tradeState := -1
+    entryPrice := close
+
+//==============================
+// FINAL BUY
+//==============================
+
+plotshape(
+     showBuySell and finalBuy,
+     title="BUY",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.rgb(19, 222, 124),
+     text="BUY",
+     textcolor=color.rgb(0, 0, 0),
+     size=size.normal)
+
+//==============================
+// FINAL SELL
+//==============================
+
+plotshape(
+     showBuySell and finalSell,
+     title="SELL",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=color.red,
+     text="SELL",
+     textcolor=color.white,
+     size=size.normal)
+
+//==============================
+// REVERSAL ALERT
+//==============================
+
+plotshape(
+     reversalAlert,
+     title="ALERT",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=color.rgb(255, 75, 59),
+     text="ALERT",
+     textcolor=color.rgb(0, 0, 0),
+     size=size.tiny)
+
+//==============================
+// ALERTS
+//==============================
+
+alertcondition(finalBuy, title="BUY", message="BUY Signal")
+alertcondition(finalSell, title="SELL", message="SELL Signal")
+alertcondition(reversalAlert, title="REVERSAL", message="Possible Reversal")
+
+//==================================================
+// BUILD-21 : SMART TP ENGINE
+//==================================================
+
+// ATR Risk
+float tradeATR = ta.atr(14)
+
+// Stop Loss Distance
+float slDistance = tradeATR * 1.5
+
+// BUY Levels
+float buySL  = entryPrice - slDistance
+float buyTP1 = entryPrice + slDistance * 1.0
+float buyTP2 = entryPrice + slDistance * 2.0
+float buyTP3 = entryPrice + slDistance * 3.0
+float buyTP4 = entryPrice + slDistance * 4.0
+float buyTP5 = entryPrice + slDistance * 5.0
+float buyTP6 = entryPrice + slDistance * 6.0
+
+// SELL Levels
+float sellSL  = entryPrice + slDistance
+float sellTP1 = entryPrice - slDistance * 1.0
+float sellTP2 = entryPrice - slDistance * 2.0
+float sellTP3 = entryPrice - slDistance * 3.0
+float sellTP4 = entryPrice - slDistance * 4.0
+float sellTP5 = entryPrice - slDistance * 5.0
+float sellTP6 = entryPrice - slDistance * 6.0
+
+// Save Active Trade Levels
+if finalBuy
+    stopLoss := buySL
+    tp1 := buyTP1
+    tp2 := buyTP2
+    tp3 := buyTP3
+    tp4 := buyTP4
+    tp5 := buyTP5
+    tp6 := buyTP6
+
+if finalSell
+    stopLoss := sellSL
+    tp1 := sellTP1
+    tp2 := sellTP2
+    tp3 := sellTP3
+    tp4 := sellTP4
+    tp5 := sellTP5
+    tp6 := sellTP6
+
+//==================================================
+// BUILD-22 : SMART TP DRAWING ENGINE
+//==================================================
+
+// Delete Previous Lines
+if not na(slLine)
+    line.delete(slLine)
+if not na(tp1Line)
+    line.delete(tp1Line)
+if not na(tp2Line)
+    line.delete(tp2Line)
+if not na(tp3Line)
+    line.delete(tp3Line)
+if not na(tp4Line)
+    line.delete(tp4Line)
+if not na(tp5Line)
+    line.delete(tp5Line)
+if not na(tp6Line)
+    line.delete(tp6Line)
+
+// Draw New Levels
+if finalBuy or finalSell
+
+    slLine := line.new(
+         bar_index,
+         stopLoss,
+         bar_index + 20,
+         stopLoss,
+         color=color.red,
+         width=2)
+
+    tp1Line := line.new(bar_index,tp1,bar_index+20,tp1,color=color.lime,width=2)
+    tp2Line := line.new(bar_index,tp2,bar_index+20,tp2,color=color.lime,width=2)
+    tp3Line := line.new(bar_index,tp3,bar_index+20,tp3,color=color.lime,width=2)
+    tp4Line := line.new(bar_index,tp4,bar_index+20,tp4,color=color.lime,width=2)
+    tp5Line := line.new(bar_index,tp5,bar_index+20,tp5,color=color.lime,width=2)
+    tp6Line := line.new(bar_index,tp6,bar_index+20,tp6,color=color.lime,width=2)
+
+//==================================================
+// BUILD-23 : TP HIT ENGINE
+//==================================================
+
+// Active TP State
+var int activeTP = 0
+
+// Reset on New Trade
+if finalBuy or finalSell
+    activeTP := 1
+
+//==============================
+// BUY TP HIT
+//==============================
+
+if tradeState == 1
+
+    if activeTP == 1 and high >= tp1
+        activeTP := 2
+
+    if activeTP == 2 and high >= tp2
+        activeTP := 3
+
+    if activeTP == 3 and high >= tp3
+        activeTP := 4
+
+    if activeTP == 4 and high >= tp4
+        activeTP := 5
+
+    if activeTP == 5 and high >= tp5
+        activeTP := 6
+
+    if activeTP == 6 and high >= tp6
+        activeTP := 7
+
+//==============================
+// SELL TP HIT
+//==============================
+
+if tradeState == -1
+
+    if activeTP == 1 and low <= tp1
+        activeTP := 2
+
+    if activeTP == 2 and low <= tp2
+        activeTP := 3
+
+    if activeTP == 3 and low <= tp3
+        activeTP := 4
+
+    if activeTP == 4 and low <= tp4
+        activeTP := 5
+
+    if activeTP == 5 and low <= tp5
+        activeTP := 6
+
+    if activeTP == 6 and low <= tp6
+        activeTP := 7
+
+    //==================================================
+// BUILD-24 : TP HIT LABEL ENGINE (FIXED)
+//==================================================
+
+// TP1
+plotshape(
+     activeTP == 2,
+     title="TP1 HIT",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.lime,
+     text="TP1",
+     textcolor=color.black,
+     size=size.tiny)
+
+// TP2
+plotshape(
+     activeTP == 3,
+     title="TP2 HIT",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.lime,
+     text="TP2",
+     textcolor=color.black,
+     size=size.tiny)
+
+// TP3
+plotshape(
+     activeTP == 4,
+     title="TP3 HIT",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.lime,
+     text="TP3",
+     textcolor=color.black,
+     size=size.tiny)
+
+// TP4
+plotshape(
+     activeTP == 5,
+     title="TP4 HIT",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.lime,
+     text="TP4",
+     textcolor=color.black,
+     size=size.tiny)
+
+// TP5
+plotshape(
+     activeTP == 6,
+     title="TP5 HIT",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.lime,
+     text="TP5",
+     textcolor=color.black,
+     size=size.tiny)
+
+// TP6
+plotshape(
+     activeTP >= 7,
+     title="TP6 HIT",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.lime,
+     text="TP6",
+     textcolor=color.black,
+     size=size.tiny)
+
+    //==================================================
+// BUILD-25 : FINAL SIGNAL FILTER ENGINE
+//==================================================
+
+// Signal Cooldown
+var int lastSignalBar = na
+
+int cooldownBars =
+     timeframe.multiplier <= 5 ? 8 :
+     timeframe.multiplier <= 15 ? 5 : 3
+
+bool allowSignal =
+     na(lastSignalBar) or
+     (bar_index - lastSignalBar > cooldownBars)
+
+// Final Signals
+bool cleanBuy =
+     finalBuy and
+     allowSignal
+
+bool cleanSell =
+     finalSell and
+     allowSignal
+
+// Save Last Signal
+if cleanBuy or cleanSell
+    lastSignalBar := bar_index
+
+// Final BUY
+plotshape(
+     cleanBuy,
+     title="BUY FINAL",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.lime,
+     text="BUY",
+     textcolor=color.black,
+     size=size.normal)
+
+// Final SELL
+plotshape(
+     cleanSell,
+     title="SELL FINAL",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=color.red,
+     text="SELL",
+     textcolor=color.white,
+     size=size.normal)
+
+// Final Alert
+bool cleanAlert =
+     reversalAlert and
+     not cleanBuy and
+     not cleanSell
+
+plotshape(
+     cleanAlert,
+     title="REVERSAL",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=color.yellow,
+     text="ALERT",
+     textcolor=color.black,
+     size=size.tiny)
+
+// Alerts
+alertcondition(cleanBuy, "BUY", "BUY Signal")
+alertcondition(cleanSell, "SELL", "SELL Signal")
+alertcondition(cleanAlert, "REVERSAL", "Possible Reversal")
+
+//==================================================
+// BUILD-26 : TRADE HISTORY ENGINE
+//==================================================
+
+// Trade Statistics
+var int totalTrades = 0
+var int buyTrades   = 0
+var int sellTrades  = 0
+
+// Count Trades
+if cleanBuy
+    totalTrades += 1
+    buyTrades += 1
+
+if cleanSell
+    totalTrades += 1
+    sellTrades += 1
+
+// Last Trade Direction
+string lastTrade =
+     tradeState == 1 ? "BUY" :
+     tradeState == -1 ? "SELL" : "NONE"
+
+// Alerts
+alertcondition(cleanBuy, title="BUY ENTRY", message="BUY Executed")
+alertcondition(cleanSell, title="SELL ENTRY", message="SELL Executed")
+
+//==================================================
+// BUILD-27 : WIN RATE ENGINE
+//==================================================
+
+// Statistics
+var int winningTrades = 0
+var int losingTrades  = 0
+
+// Win Detection
+bool buyWin =
+     tradeState == 1 and
+     activeTP >= 2
+
+bool sellWin =
+     tradeState == -1 and
+     activeTP >= 2
+
+// Loss Detection
+bool buyLoss =
+     tradeState == 1 and
+     low <= stopLoss
+
+bool sellLoss =
+     tradeState == -1 and
+     high >= stopLoss
+
+// Count Wins
+if buyWin
+    winningTrades += 1
+    tradeState := 0
+
+if sellWin
+    winningTrades += 1
+    tradeState := 0
+
+// Count Losses
+if buyLoss
+    losingTrades += 1
+    tradeState := 0
+
+if sellLoss
+    losingTrades += 1
+    tradeState := 0
+
+// Total Closed Trades
+int closedTrades =
+     winningTrades + losingTrades
+
+// Win Rate
+float winRate =
+     closedTrades > 0 ?
+     winningTrades * 100.0 / closedTrades :
+     0.0
+
+// Alerts
+alertcondition(buyWin, "BUY WIN", "BUY Trade Won")
+alertcondition(sellWin, "SELL WIN", "SELL Trade Won")
+alertcondition(buyLoss, "BUY LOSS", "BUY Stop Loss Hit")
+alertcondition(sellLoss, "SELL LOSS", "SELL Stop Loss Hit")
+
+//==================================================
+// BUILD-28 : PROFESSIONAL DASHBOARD ENGINE
+//==================================================
+
+// Dashboard
+var table dashboard = table.new(position.top_right, 2, 8, border_width=1)
+
+// Update Only On Last Bar
+if barstate.islast
+
+    table.cell(dashboard, 0, 0, "Smart AI", bgcolor=color.blue, text_color=color.white)
+    table.cell(dashboard, 1, 0, VERSION)
+
+    table.cell(dashboard, 0, 1, "Trend")
+    table.cell(dashboard, 1, 1, tradeState == 1 ? "BUY" : tradeState == -1 ? "SELL" : "WAIT")
+
+    table.cell(dashboard, 0, 2, "Buy Score")
+    table.cell(dashboard, 1, 2, str.tostring(buyScore))
+
+    table.cell(dashboard, 0, 3, "Sell Score")
+    table.cell(dashboard, 1, 3, str.tostring(sellScore))
+
+    table.cell(dashboard, 0, 4, "Win Rate")
+    table.cell(dashboard, 1, 4, str.tostring(math.round(winRate)) + "%")
+
+    table.cell(dashboard, 0, 5, "Trades")
+    table.cell(dashboard, 1, 5, str.tostring(totalTrades))
+
+    table.cell(dashboard, 0, 6, "TP")
+    table.cell(dashboard, 1, 6, str.tostring(activeTP))
+
+    table.cell(dashboard, 0, 7, "Version")
+    table.cell(dashboard, 1, 7, VERSION)
+
+//==================================================
+// BUILD-29 : SMART SESSION ENGINE
+//==================================================
+
+// Session Times (Exchange Time)
+bool asiaSession =
+     not na(time(timeframe.period, "0000-0800"))
+
+bool londonSession =
+     not na(time(timeframe.period, "0800-1700"))
+
+bool newYorkSession =
+     not na(time(timeframe.period, "1300-2200"))
+
+// Active Session
+string currentSession =
+     asiaSession ? "ASIA" :
+     londonSession ? "LONDON" :
+     newYorkSession ? "NEW YORK" :
+     "OFF"
+
+// Session Strength
+int sessionScore = 0
+
+if asiaSession
+    sessionScore := 60
+
+if londonSession
+    sessionScore := 85
+
+if newYorkSession
+    sessionScore := 90
+
+// AI Score Bonus
+if sessionScore >= 85
+    buyScore := math.min(buyScore + 5, 100)
+    sellScore := math.min(sellScore + 5, 100)
+
+// Session Filter
+bool sessionTradeAllowed =
+     sessionScore >= 60
+
+// Upgrade Final Signals
+cleanBuy := cleanBuy and sessionTradeAllowed
+cleanSell := cleanSell and sessionTradeAllowed
+
+// Alerts
+alertcondition(
+     asiaSession,
+     title="Asia Session",
+     message="Asia Trading Session Started")
+
+alertcondition(
+     londonSession,
+     title="London Session",
+     message="London Trading Session Started")
+
+alertcondition(
+     newYorkSession,
+     title="New York Session",
+     message="New York Trading Session Started")
+
+    //==================================================
+// BUILD-30 : SMART MONEY CONFIRMATION ENGINE
+//==================================================
+
+// BOS Confirmation
+bool smcBull =
+     bullishBOS and
+     bullLiquiditySweep
+
+bool smcBear =
+     bearishBOS and
+     bearLiquiditySweep
+
+// CHOCH Confirmation
+bool chochBull =
+     bullishCHOCH and
+     bullRejection
+
+bool chochBear =
+     bearishCHOCH and
+     bearRejection
+
+// Order Flow
+bool orderFlowBuy =
+     smcBull or
+     chochBull
+
+bool orderFlowSell =
+     smcBear or
+     chochBear
+
+// AI Score Upgrade
+if orderFlowBuy
+    buyScore := math.min(buyScore + 10, 100)
+
+if orderFlowSell
+    sellScore := math.min(sellScore + 10, 100)
+
+// Final Smart Money Confirmation
+bool smartMoneyConfirmedBuy =
+     cleanBuy and
+     orderFlowBuy
+
+bool smartMoneyConfirmedSell =
+     cleanSell and
+     orderFlowSell
+
+// Smart Money Alerts
+alertcondition(
+     smartMoneyConfirmedBuy,
+     title="SMART BUY",
+     message="Smart Money BUY Confirmed")
+
+alertcondition(
+     smartMoneyConfirmedSell,
+     title="SMART SELL",
+     message="Smart Money SELL Confirmed")
+
+    //==================================================
+// BUILD-31 : MULTI TIMEFRAME CONFIRMATION ENGINE
+//==================================================
+
+// Higher Timeframe EMA
+float htfEMA20 = request.security(syminfo.tickerid, "15", ta.ema(close, 20))
+float htfEMA50 = request.security(syminfo.tickerid, "15", ta.ema(close, 50))
+
+// Higher Timeframe Trend
+bool htfBull =
+     htfEMA20 > htfEMA50
+
+bool htfBear =
+     htfEMA20 < htfEMA50
+
+// Confirmation Score
+if htfBull
+    buyScore := math.min(buyScore + 10, 100)
+
+if htfBear
+    sellScore := math.min(sellScore + 10, 100)
+
+// Final MTF Confirmation
+bool mtfBuyConfirmed =
+     smartMoneyConfirmedBuy and
+     htfBull
+
+bool mtfSellConfirmed =
+     smartMoneyConfirmedSell and
+     htfBear
+
+// MTF Alerts
+alertcondition(
+     mtfBuyConfirmed,
+     title="MTF BUY",
+     message="Multi Timeframe BUY Confirmed")
+
+alertcondition(
+     mtfSellConfirmed,
+     title="MTF SELL",
+     message="Multi Timeframe SELL Confirmed")
+
+    //==================================================
+// BUILD-32 : AI RATING ENGINE
+//==================================================
+
+// AI Rating
+int aiRating = 0
+
+// Trend
+aiRating += strongBull or strongBear ? 20 : 0
+
+// Structure
+aiRating += bullishStructure or bearishStructure ? 15 : 0
+
+// Smart Money
+aiRating += smartMoneyConfirmedBuy or smartMoneyConfirmedSell ? 20 : 0
+
+// Multi Timeframe
+aiRating += mtfBuyConfirmed or mtfSellConfirmed ? 15 : 0
+
+// Liquidity
+aiRating += liquidityBuy or liquiditySell ? 10 : 0
+
+// Order Block
+aiRating += bullOrderBlock or bearOrderBlock ? 10 : 0
+
+// Fair Value Gap
+aiRating += bullFVG or bearFVG ? 10 : 0
+
+// Final Rating
+aiRating := math.min(aiRating, 100)
+
+// Rating Text
+string aiSignalStrength =
+     aiRating >= 90 ? "★★★★★" :
+     aiRating >= 75 ? "★★★★" :
+     aiRating >= 60 ? "★★★" :
+     aiRating >= 40 ? "★★" : "★"
+
+// Strong Signal
+bool premiumBuy =
+     mtfBuyConfirmed and
+     aiRating >= 80
+
+bool premiumSell =
+     mtfSellConfirmed and
+     aiRating >= 80
+
+// Alerts
+alertcondition(
+     premiumBuy,
+     title="PREMIUM BUY",
+     message="Premium BUY Signal")
+
+alertcondition(
+     premiumSell,
+     title="PREMIUM SELL",
+     message="Premium SELL Signal")
+
+    //==================================================
+// BUILD-33 : AUTO TP EXTENSION ENGINE
+//==================================================
+
+// Next TP
+var float nextTP = na
+
+// BUY
+if tradeState == 1
+
+    if activeTP >= 7
+        nextTP := tp6 + ta.atr(14)
+
+    if activeTP >= 8
+        nextTP := nextTP + ta.atr(14)
+
+// SELL
+if tradeState == -1
+
+    if activeTP >= 7
+        nextTP := tp6 - ta.atr(14)
+
+    if activeTP >= 8
+        nextTP := nextTP - ta.atr(14)
+
+// Plot Next TP
+plot(
+     showTargets ? nextTP : na,
+     title="Next TP",
+     color=color.green,
+     linewidth=2)
+
+// Alert
+bool nextTPHit =
+     tradeState == 1 ? high >= nextTP :
+     tradeState == -1 ? low <= nextTP : false
+
+alertcondition(
+     nextTPHit,
+     title="NEXT TP",
+     message="Next Take Profit Reached")
+
+    //==================================================
+// BUILD-34 : TRADE HISTORY & PERFORMANCE ENGINE
+//==================================================
+
+// Performance Statistics
+var int totalWins = 0
+var int totalLosses = 0
+var int totalBuySignals = 0
+var int totalSellSignals = 0
+
+// Count Signals
+if cleanBuy
+    totalBuySignals += 1
+
+if cleanSell
+    totalSellSignals += 1
+
+// Count Results
+if buyWin or sellWin
+    totalWins += 1
+
+if buyLoss or sellLoss
+    totalLosses += 1
+
+// Current Win Rate
+float performance =
+     (totalWins + totalLosses) > 0 ?
+     (totalWins * 100.0) / (totalWins + totalLosses) :
+     0.0
+
+// Current Streak
+var int winStreak = 0
+var int lossStreak = 0
+
+if buyWin or sellWin
+    winStreak += 1
+    lossStreak := 0
+
+if buyLoss or sellLoss
+    lossStreak += 1
+    winStreak := 0
+
+// Best Win Streak
+var int bestWinStreak = 0
+
+if winStreak > bestWinStreak
+    bestWinStreak := winStreak
+
+// Alerts
+alertcondition(
+     performance >= 70,
+     title="HIGH PERFORMANCE",
+     message="Win Rate Above 70%")
+
+alertcondition(
+     winStreak >= 5,
+     title="WIN STREAK",
+     message="5 Winning Trades In Row")
+
+    //==================================================
+// BUILD-35 : MASTER SIGNAL ENGINE
+//==================================================
+
+// Master Signal Lock
+var int lastMasterSignalBar = na
+
+int masterCooldown =
+     timeframe.multiplier <= 5 ? 10 :
+     timeframe.multiplier <= 15 ? 6 : 4
+
+bool masterSignalReady =
+     na(lastMasterSignalBar) or
+     (bar_index - lastMasterSignalBar >= masterCooldown)
+
+//==================================================
+// FINAL AI SIGNALS
+//==================================================
+
+bool masterBuy =
+     premiumBuy and
+     smartMoneyConfirmedBuy and
+     sessionTradeAllowed and
+     masterSignalReady
+
+bool masterSell =
+     premiumSell and
+     smartMoneyConfirmedSell and
+     sessionTradeAllowed and
+     masterSignalReady
+
+bool masterAlert =
+     reversalAlert and
+     not masterBuy and
+     not masterSell
+
+//==================================================
+// UPDATE STATE
+//==================================================
+
+if masterBuy
+    tradeState := 1
+    entryPrice := close
+    lastMasterSignalBar := bar_index
+
+if masterSell
+    tradeState := -1
+    entryPrice := close
+    lastMasterSignalBar := bar_index
+
+//==================================================
+// MASTER ALERTS ONLY
+//==================================================
+
+alertcondition(
+     masterBuy,
+     title="MASTER BUY",
+     message="Smart AI Crypto Pro MASTER BUY")
+
+alertcondition(
+     masterSell,
+     title="MASTER SELL",
+     message="Smart AI Crypto Pro MASTER SELL")
+
+alertcondition(
+     masterAlert,
+     title="MASTER ALERT",
+     message="Possible Trend Reversal")
