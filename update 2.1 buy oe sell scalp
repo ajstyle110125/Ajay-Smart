@@ -1,0 +1,429 @@
+//@version=6
+indicator("Ajay Trade Engine - 1M/5M Precision v8.1 Direction Filtered", shorttitle="ATE P8.1", overlay=true, max_labels_count=300, max_lines_count=300, max_boxes_count=50)
+
+//==================================================
+// ATE PRECISION v7
+// Clean engine: ONLY 1M + 5M visible trading signals.
+// No EMA plots. No legacy signal engine. No plot() calls.
+//==================================================
+
+//------------------------------
+// TIMEFRAME GATE
+//------------------------------
+bool tf1m = timeframe.isminutes and timeframe.multiplier == 1
+bool tf5m = timeframe.isminutes and timeframe.multiplier == 5
+bool tradeTF = tf1m or tf5m
+string biasTF = tf1m ? "5" : "15"
+
+//------------------------------
+// INPUTS
+//------------------------------
+string G1 = "1M / 5M ENTRY"
+string G2 = "MASTER MOVE"
+string G3 = "TP ENGINE"
+string G4 = "DISPLAY"
+
+int srLen = input.int(20, "Structure Lookback", minval=8, maxval=60, group=G1)
+int pivotLen = input.int(2, "Swing Strength", minval=1, maxval=4, group=G1)
+float zoneATR = input.float(0.25, "S/R Reaction Zone ATR", minval=0.05, maxval=0.75, step=0.05, group=G1)
+float minRoomSteps = input.float(2.0, "Minimum TP Room (steps)", minval=1.0, maxval=5.0, step=0.5, group=G1)
+int cooldown1m = input.int(3, "1M Signal Cooldown Bars", minval=1, maxval=20, group=G1)
+int cooldown5m = input.int(2, "5M Signal Cooldown Bars", minval=1, maxval=10, group=G1)
+int reactionLookbackP = input.int(8, "Fast Reaction Lookback", minval=4, maxval=20, group=G1)
+float reversalATRGuardP = input.float(0.35, "Opposite Reversal ATR Guard", minval=0.15, maxval=1.0, step=0.05, group=G1)
+
+float masterBodyATR = input.float(0.90, "MASTER Body / ATR", minval=0.60, maxval=2.0, step=0.05, group=G2)
+float masterRoomSteps = input.float(2.0, "MASTER Minimum TP Room (steps)", minval=1.0, maxval=5.0, step=0.5, group=G2)
+float masterWickLimit = input.float(0.35, "MASTER Max Opposite Wick", minval=0.10, maxval=0.60, step=0.05, group=G2)
+float endBodyATR = input.float(0.80, "MASTER Reversal Body / ATR", minval=0.50, maxval=1.50, step=0.05, group=G2)
+
+bool autoTP = input.bool(true, "Auto TP Step", group=G3)
+float manualTP = input.float(50.0, "Manual TP Step", minval=0.01, step=0.01, group=G3)
+int tpCount = input.int(10, "Continuous TP Levels", minval=3, maxval=20, group=G3)
+
+bool showScalp = input.bool(true, "Show SCALP", group=G4)
+bool showMaster = input.bool(true, "Show MASTER", group=G4)
+bool showEnd = input.bool(true, "Show MASTER END", group=G4)
+bool showTP = input.bool(true, "Show TP Lines", group=G4)
+bool showSR = input.bool(false, "Show Support / Resistance", group=G4)
+bool showDashboard = input.bool(true, "Show Dashboard", group=G4)
+
+//------------------------------
+// CORE DATA
+//------------------------------
+float atrP = ta.atr(14)
+float atrAvgP = ta.sma(atrP, 20)
+float volAvgP = ta.sma(volume, 20)
+float candleRangeP = math.max(high - low, syminfo.mintick)
+float bodyP = math.abs(close - open)
+float bodyPctP = bodyP / candleRangeP
+float closeLocP = (close - low) / candleRangeP
+float upperWickP = high - math.max(open, close)
+float lowerWickP = math.min(open, close) - low
+
+// Auto step: crypto = 50 price units; XAU/FX = 50 ticks.
+string tickerUpperP = str.upper(syminfo.ticker)
+bool isXAUP = str.contains(tickerUpperP, "XAU")
+bool isFXP = syminfo.type == "forex" or isXAUP
+float autoStepP = isFXP ? syminfo.mintick * 50.0 : 50.0
+float tpStepP = autoTP ? autoStepP : manualTP
+// SCALP target is intentionally larger than the old 50-step target:
+// 1M = 100 price-units/ticks, 5M = 150 price-units/ticks.
+float scalpTpStepP = tpStepP * (tf5m ? 3.0 : 2.0)
+
+//------------------------------
+// LOCAL STRUCTURE
+//------------------------------
+float rangeSupportP = ta.lowest(low, srLen)[1]
+float rangeResistanceP = ta.highest(high, srLen)[1]
+float pivotLowP = ta.pivotlow(low, pivotLen, pivotLen)
+float pivotHighP = ta.pivothigh(high, pivotLen, pivotLen)
+
+var float lastSupportP = na
+var float lastResistanceP = na
+if not na(pivotLowP)
+    lastSupportP := pivotLowP
+if not na(pivotHighP)
+    lastResistanceP := pivotHighP
+
+// Use the most recent structural level, with the rolling range as fallback.
+float supportP = not na(lastSupportP) ? lastSupportP : rangeSupportP
+float resistanceP = not na(lastResistanceP) ? lastResistanceP : rangeResistanceP
+
+float zoneP = atrP * zoneATR
+// Fast local walls are used for entries so the engine reacts to the nearby swing
+// that is actually being rejected, instead of waiting for a distant 20-bar wall.
+float fastResistanceP = ta.highest(high, reactionLookbackP)[1]
+float fastSupportP = ta.lowest(low, reactionLookbackP)[1]
+float effectiveResistanceP = na(resistanceP) ? fastResistanceP : na(fastResistanceP) ? resistanceP : math.min(resistanceP, fastResistanceP)
+float effectiveSupportP = na(supportP) ? fastSupportP : na(fastSupportP) ? supportP : math.max(supportP, fastSupportP)
+float buyRoomP = not na(effectiveResistanceP) ? effectiveResistanceP - close : na
+float sellRoomP = not na(effectiveSupportP) ? close - effectiveSupportP : na
+float minRoomP = tpStepP * minRoomSteps
+float masterMinRoomP = tpStepP * masterRoomSteps
+
+bool buyRoomOKP = tradeTF and not na(buyRoomP) and buyRoomP >= minRoomP
+bool sellRoomOKP = tradeTF and not na(sellRoomP) and sellRoomP >= minRoomP
+bool masterBuyRoomOKP = tradeTF and not na(buyRoomP) and buyRoomP >= masterMinRoomP
+bool masterSellRoomOKP = tradeTF and not na(sellRoomP) and sellRoomP >= masterMinRoomP
+
+//------------------------------
+// NON-REPAINTING HTF BIAS
+//------------------------------
+float htfFastP = request.security(syminfo.tickerid, biasTF, ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+float htfSlowP = request.security(syminfo.tickerid, biasTF, ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+float htfCloseP = request.security(syminfo.tickerid, biasTF, close, lookahead=barmerge.lookahead_off)
+bool htfBullP = htfFastP > htfSlowP and htfCloseP > htfFastP
+bool htfBearP = htfFastP < htfSlowP and htfCloseP < htfFastP
+
+// Local trend is a filter, not the trigger.
+float localFastP = ta.ema(close, 9)
+float localSlowP = ta.ema(close, 21)
+bool localBullP = localFastP > localSlowP
+bool localBearP = localFastP < localSlowP
+
+//------------------------------
+// STRUCTURE REACTION
+//------------------------------
+bool atSupportP = not na(effectiveSupportP) and low <= effectiveSupportP + zoneP and close >= effectiveSupportP
+bool atResistanceP = not na(effectiveResistanceP) and high >= effectiveResistanceP - zoneP and close <= effectiveResistanceP
+
+// A signal needs a real rejection, not just a level touch.
+bool bullishReactionP = atSupportP and close > open and closeLocP >= 0.58 and lowerWickP >= math.max(bodyP * 0.12, candleRangeP * 0.08)
+bool bearishReactionP = atResistanceP and close < open and closeLocP <= 0.42 and upperWickP >= math.max(bodyP * 0.12, candleRangeP * 0.08)
+
+// Large displacement candle. It can be the first evidence of the move,
+// but it is only tradable when it is near a structure level or breaks one.
+bool bullDisplacementP = close > open and bodyP >= atrP * 0.75 and closeLocP >= 0.70 and bodyPctP >= 0.55
+bool bearDisplacementP = close < open and bodyP >= atrP * 0.75 and closeLocP <= 0.30 and bodyPctP >= 0.55
+
+bool bullBreakP = not na(effectiveResistanceP) and close > effectiveResistanceP and close[1] <= effectiveResistanceP
+bool bearBreakP = not na(effectiveSupportP) and close < effectiveSupportP and close[1] >= effectiveSupportP
+
+// Pullback/reclaim after a big candle: this is the part that captures the
+// user's desired BUY under a large bullish 5M candle.
+bool bullPullbackRawP = close > open and close > high[1] * 0.999999 and low <= high[1] + zoneP and close > (high[1] + low[1]) * 0.5 and close[1] > open[1] and bodyP[1] >= atrP[1] * 0.75
+bool bearPullbackRawP = close < open and close < low[1] * 1.000001 and high >= low[1] - zoneP and close < (high[1] + low[1]) * 0.5 and close[1] < open[1] and bodyP[1] >= atrP[1] * 0.75
+bool bullPullbackP = bullPullbackRawP and (bullBreakP[1] or bullishReactionP[1])
+bool bearPullbackP = bearPullbackRawP and (bearBreakP[1] or bearishReactionP[1])
+
+//------------------------------
+// ENTRY LOCATION FILTER
+//------------------------------
+// A normal scalp must be either at S/R or immediately after a displacement.
+// Failed push/rejection catches the kind of local top visible in the user's
+// screenshot: price pushes into the recent high, then closes back down.
+bool bullFailedPushP = atSupportP and close > open and closeLocP >= 0.55 and close > close[1]
+bool bearFailedPushP = atResistanceP and close < open and closeLocP <= 0.45 and close < close[1]
+bool buyLocationP = bullishReactionP or bullBreakP or bullFailedPushP or (bullDisplacementP and (atSupportP or bullBreakP)) or bullPullbackP
+bool sellLocationP = bearishReactionP or bearBreakP or bearFailedPushP or (bearDisplacementP and (atResistanceP or bearBreakP)) or bearPullbackP
+
+// Do not buy directly under resistance or sell directly above support.
+bool notUnderResistanceP = buyRoomP >= minRoomP
+bool notAboveSupportP = sellRoomP >= minRoomP
+
+//------------------------------
+// SCALP ENGINE
+//------------------------------
+// Same-direction scalp can work inside a MASTER move; counter scalp is only
+// allowed at the opposite structural wall, never in the middle of the range.
+bool scalpBuyRoomOKP = buyRoomP >= scalpTpStepP
+bool scalpSellRoomOKP = sellRoomP >= scalpTpStepP
+bool scalpBuySetupP = tradeTF and scalpBuyRoomOKP and buyLocationP and notUnderResistanceP and (htfBullP or bullishReactionP or bullBreakP or bullFailedPushP)
+bool scalpSellSetupP = tradeTF and scalpSellRoomOKP and sellLocationP and notAboveSupportP and (htfBearP or bearishReactionP or bearBreakP or bearFailedPushP)
+
+//------------------------------
+// MASTER ENGINE
+//------------------------------
+// MASTER BUY = structure break or support launch + strong displacement.
+// It must have room for at least two TP steps and must not be a late chase.
+bool masterBullCandleP = bullDisplacementP and bodyP >= atrP * masterBodyATR and closeLocP >= 0.74 and upperWickP <= candleRangeP * masterWickLimit and atrP >= atrAvgP * 0.90
+bool masterBearCandleP = bearDisplacementP and bodyP >= atrP * masterBodyATR and closeLocP <= 0.26 and lowerWickP <= candleRangeP * masterWickLimit and atrP >= atrAvgP * 0.90
+
+bool supportLaunchP = bullishReactionP and bodyP >= atrP * 0.65 and localBullP
+bool resistanceLaunchP = bearishReactionP and bodyP >= atrP * 0.65 and localBearP
+
+bool masterBuyAtSupportP = supportLaunchP and not na(effectiveSupportP) and close - effectiveSupportP <= atrP * 0.60
+bool masterBuyAtBreakP = bullBreakP and not na(effectiveResistanceP) and close - effectiveResistanceP <= atrP * 0.50
+bool masterSellAtResistanceP = resistanceLaunchP and not na(effectiveResistanceP) and effectiveResistanceP - close <= atrP * 0.60
+bool masterSellAtBreakP = bearBreakP and not na(effectiveSupportP) and effectiveSupportP - close <= atrP * 0.50
+
+bool masterBuySetupP = tradeTF and masterBuyRoomOKP and masterBullCandleP and htfBullP and (masterBuyAtBreakP or masterBuyAtSupportP)
+bool masterSellSetupP = tradeTF and masterSellRoomOKP and masterBearCandleP and htfBearP and (masterSellAtBreakP or masterSellAtResistanceP)
+
+// One-shot trigger: do not print the same MASTER on every candle.
+bool masterBuyTriggerP = masterBuySetupP and not masterBuySetupP[1]
+bool masterSellTriggerP = masterSellSetupP and not masterSellSetupP[1]
+
+//------------------------------
+// MASTER STATE
+//------------------------------
+var int masterStateP = 0
+var float masterEntryP = na
+
+if masterBuyTriggerP
+    masterStateP := 1
+    masterEntryP := close
+else if masterSellTriggerP
+    masterStateP := -1
+    masterEntryP := close
+
+//------------------------------
+// MASTER END / REVERSAL
+//------------------------------
+bool strongBearReversalP = bearDisplacementP and bodyP >= atrP * endBodyATR and closeLocP <= 0.28 and (bearBreakP or bearishReactionP)
+bool strongBullReversalP = bullDisplacementP and bodyP >= atrP * endBodyATR and closeLocP >= 0.72 and (bullBreakP or bullishReactionP)
+
+bool masterBuyEndP = masterStateP == 1 and strongBearReversalP
+bool masterSellEndP = masterStateP == -1 and strongBullReversalP
+
+// A valid opposite MASTER replaces the old state immediately.
+if masterSellTriggerP
+    masterStateP := -1
+    masterEntryP := close
+else if masterBuyTriggerP
+    masterStateP := 1
+    masterEntryP := close
+else if masterBuyEndP and not masterSellSetupP
+    masterStateP := 0
+else if masterSellEndP and not masterBuySetupP
+    masterStateP := 0
+
+//------------------------------
+// SIGNAL COOLDOWN
+//------------------------------
+var int lastBuyBarP = na
+var int lastSellBarP = na
+int cooldownP = tf1m ? cooldown1m : cooldown5m
+bool buyCooldownOKP = na(lastBuyBarP) or bar_index - lastBuyBarP >= cooldownP
+bool sellCooldownOKP = na(lastSellBarP) or bar_index - lastSellBarP >= cooldownP
+
+// Master has priority. Otherwise scalp is shown.
+// A confirmed opposite rejection immediately blocks the old direction.
+bool bearishFlipGuardP = bearBreakP or (bearishReactionP and close < localFastP - atrP * reversalATRGuardP) or (bearDisplacementP and close < close[1])
+bool bullishFlipGuardP = bullBreakP or (bullishReactionP and close > localFastP + atrP * reversalATRGuardP) or (bullDisplacementP and close > close[1])
+bool finalBuyP = tradeTF and buyCooldownOKP and (masterBuyTriggerP or (scalpBuySetupP and not masterSellTriggerP and not bearishFlipGuardP))
+bool finalSellP = tradeTF and sellCooldownOKP and (masterSellTriggerP or (scalpSellSetupP and not masterBuyTriggerP and not bullishFlipGuardP))
+
+if finalBuyP
+    lastBuyBarP := bar_index
+if finalSellP
+    lastSellBarP := bar_index
+
+// Do not print both directions on one candle.
+if finalBuyP and finalSellP
+    finalBuyP := masterBuyTriggerP
+    finalSellP := masterSellTriggerP
+
+//------------------------------
+// TP DRAWING
+//------------------------------
+var line[] tpLinesP = array.new_line()
+var label[] tpLabelsP = array.new_label()
+
+f_clearTpP() =>
+    if array.size(tpLinesP) > 0
+        for i = 0 to array.size(tpLinesP) - 1
+            line.delete(array.get(tpLinesP, i))
+        array.clear(tpLinesP)
+    if array.size(tpLabelsP) > 0
+        for i = 0 to array.size(tpLabelsP) - 1
+            label.delete(array.get(tpLabelsP, i))
+        array.clear(tpLabelsP)
+
+f_drawTpP(_entry, _isBuy, _stepP) =>
+    f_clearTpP()
+    if showTP
+        for n = 1 to tpCount
+            float targetP = _isBuy ? _entry + _stepP * n : _entry - _stepP * n
+            line tpLineP = line.new(bar_index, targetP, bar_index + 1, targetP, xloc=xloc.bar_index, extend=extend.right, color=_isBuy ? color.new(color.lime, 35) : color.new(color.red, 35), style=line.style_dashed, width=1)
+            array.push(tpLinesP, tpLineP)
+            if n <= 3
+                label tpLabelP = label.new(bar_index, targetP, "TP" + str.tostring(n) + "  " + str.tostring(targetP, format.mintick), yloc=yloc.price, style=label.style_label_left, color=_isBuy ? color.new(color.lime, 5) : color.new(color.red, 5), textcolor=_isBuy ? color.black : color.white, size=size.tiny)
+                array.push(tpLabelsP, tpLabelP)
+
+if finalBuyP
+    float activeStepP = masterBuyTriggerP ? tpStepP : scalpTpStepP
+    f_drawTpP(close, true, activeStepP)
+else if finalSellP
+    float activeStepP = masterSellTriggerP ? tpStepP : scalpTpStepP
+    f_drawTpP(close, false, activeStepP)
+
+//------------------------------
+// TRADE CONTINUATION
+//------------------------------
+// Once a valid scalp/master signal is active, show a continuation marker
+// when price reaches the larger scalp milestone. This does not create a new
+// entry; it only tells the trader that the existing direction is still moving.
+var int activeDirP = 0
+var float activeEntryP = na
+var int nextContinueP = 1
+var int activeSignalBarP = na
+
+if finalBuyP
+    activeDirP := 1
+    activeEntryP := close
+    nextContinueP := 1
+    activeSignalBarP := bar_index
+else if finalSellP
+    activeDirP := -1
+    activeEntryP := close
+    nextContinueP := 1
+    activeSignalBarP := bar_index
+
+float continueStepP = scalpTpStepP
+// Kill continuation state as soon as the market gives a meaningful opposite
+// rejection/break. This prevents the BUY CONTINUE spam seen before a selloff.
+bool buyActiveInvalidP = activeDirP == 1 and (bearBreakP or bearishReactionP or (bearDisplacementP and close < close[1]))
+bool sellActiveInvalidP = activeDirP == -1 and (bullBreakP or bullishReactionP or (bullDisplacementP and close > close[1]))
+if buyActiveInvalidP
+    activeDirP := 0
+    activeEntryP := na
+    nextContinueP := 1
+if sellActiveInvalidP
+    activeDirP := 0
+    activeEntryP := na
+    nextContinueP := 1
+
+bool buyContinueP = activeDirP == 1 and bar_index > activeSignalBarP and not na(activeEntryP) and high >= activeEntryP + continueStepP * nextContinueP
+bool sellContinueP = activeDirP == -1 and bar_index > activeSignalBarP and not na(activeEntryP) and low <= activeEntryP - continueStepP * nextContinueP
+
+if buyContinueP
+    // First milestone and every second milestone only: much cleaner chart.
+    if nextContinueP == 1 or nextContinueP % 2 == 0
+        label.new(bar_index, high, "BUY CONTINUE\n+" + str.tostring(continueStepP * nextContinueP, format.mintick), yloc=yloc.price, style=label.style_label_down, color=color.new(color.lime, 5), textcolor=color.black, size=size.tiny)
+    nextContinueP += 1
+
+if sellContinueP
+    if nextContinueP == 1 or nextContinueP % 2 == 0
+        label.new(bar_index, low, "SELL CONTINUE\n-" + str.tostring(continueStepP * nextContinueP, format.mintick), yloc=yloc.price, style=label.style_label_up, color=color.new(color.red, 5), textcolor=color.white, size=size.tiny)
+    nextContinueP += 1
+
+//------------------------------
+// VISIBLE SIGNAL LABELS
+//------------------------------
+if showMaster and masterBuyTriggerP
+    label.new(bar_index, low - atrP * 0.18, "MASTER BUY\nHOLD MOVE", yloc=yloc.price, style=label.style_label_up, color=color.lime, textcolor=color.black, size=size.normal)
+else if showScalp and finalBuyP
+    string buyTextP = masterStateP == -1 ? "SCALP BUY\nCOUNTER" : "SCALP BUY"
+    label.new(bar_index, low, buyTextP, yloc=yloc.price, style=label.style_label_up, color=color.lime, textcolor=color.black, size=size.small)
+
+if showMaster and masterSellTriggerP
+    label.new(bar_index, high + atrP * 0.18, "MASTER SELL\nHOLD MOVE", yloc=yloc.price, style=label.style_label_down, color=color.red, textcolor=color.white, size=size.normal)
+else if showScalp and finalSellP
+    string sellTextP = masterStateP == 1 ? "SCALP SELL\nCOUNTER" : "SCALP SELL"
+    label.new(bar_index, high, sellTextP, yloc=yloc.price, style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+
+if showEnd and masterBuyEndP
+    label.new(bar_index, high + atrP * 0.18, "MASTER BUY END\nPROTECT PROFIT", yloc=yloc.price, style=label.style_label_down, color=color.orange, textcolor=color.black, size=size.small)
+
+if showEnd and masterSellEndP
+    label.new(bar_index, low - atrP * 0.18, "MASTER SELL END\nPROTECT PROFIT", yloc=yloc.price, style=label.style_label_up, color=color.orange, textcolor=color.black, size=size.small)
+
+//------------------------------
+// OPTIONAL S/R LINES
+//------------------------------
+var line supportLineP = na
+var line resistanceLineP = na
+if showSR and tradeTF
+    if not na(supportP)
+        if na(supportLineP)
+            supportLineP := line.new(bar_index, supportP, bar_index + 1, supportP, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.aqua, 55), style=line.style_dotted)
+        else
+            line.set_xy1(supportLineP, bar_index, supportP)
+            line.set_xy2(supportLineP, bar_index + 1, supportP)
+    if not na(resistanceP)
+        if na(resistanceLineP)
+            resistanceLineP := line.new(bar_index, resistanceP, bar_index + 1, resistanceP, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.orange, 55), style=line.style_dotted)
+        else
+            line.set_xy1(resistanceLineP, bar_index, resistanceP)
+            line.set_xy2(resistanceLineP, bar_index + 1, resistanceP)
+else
+    if not na(supportLineP)
+        line.delete(supportLineP)
+        supportLineP := na
+    if not na(resistanceLineP)
+        line.delete(resistanceLineP)
+        resistanceLineP := na
+
+//------------------------------
+// SMALL DASHBOARD
+//------------------------------
+var table dashP = table.new(position.top_right, 2, 8, border_width=1)
+if barstate.islast
+    if tradeTF and showDashboard
+        string biasTextP = htfBullP ? "BULL" : htfBearP ? "BEAR" : "NEUTRAL"
+        string stateTextP = masterStateP == 1 ? "MASTER BUY" : masterStateP == -1 ? "MASTER SELL" : "WAIT"
+        table.cell(dashP, 0, 0, "ATE PRECISION")
+        table.cell(dashP, 1, 0, tf1m ? "1M" : "5M")
+        table.cell(dashP, 0, 1, "BIAS")
+        table.cell(dashP, 1, 1, biasTextP)
+        table.cell(dashP, 0, 2, "STATE")
+        table.cell(dashP, 1, 2, stateTextP)
+        table.cell(dashP, 0, 3, "TP STEP")
+        table.cell(dashP, 1, 3, str.tostring(tpStepP, format.mintick))
+        table.cell(dashP, 0, 4, "BUY ROOM")
+        table.cell(dashP, 1, 4, str.tostring(buyRoomP, format.mintick))
+        table.cell(dashP, 0, 5, "SELL ROOM")
+        table.cell(dashP, 1, 5, str.tostring(sellRoomP, format.mintick))
+        table.cell(dashP, 0, 6, "MASTER ROOM")
+        table.cell(dashP, 1, 6, str.tostring(masterMinRoomP, format.mintick))
+        table.cell(dashP, 0, 7, "MODE")
+        table.cell(dashP, 1, 7, "S/R + STRUCTURE")
+    else
+        table.cell(dashP, 0, 0, "ATE PRECISION")
+        table.cell(dashP, 1, 0, "1M / 5M ONLY")
+
+//------------------------------
+// ALERTS
+//------------------------------
+alertcondition(finalBuyP, title="ATE BUY", message="ATE Precision BUY: 1M/5M structure/support setup with TP room")
+alertcondition(finalSellP, title="ATE SELL", message="ATE Precision SELL: 1M/5M structure/resistance setup with TP room")
+alertcondition(masterBuyTriggerP, title="ATE MASTER BUY", message="ATE MASTER BUY: strong move setup - HOLD MOVE")
+alertcondition(masterSellTriggerP, title="ATE MASTER SELL", message="ATE MASTER SELL: strong move setup - HOLD MOVE")
+alertcondition(masterBuyEndP, title="ATE MASTER BUY END", message="ATE MASTER BUY END: protect profit / reversal risk")
+alertcondition(masterSellEndP, title="ATE MASTER SELL END", message="ATE MASTER SELL END: protect profit / reversal risk")
+
+//==================================================
+// END
+//==================================================
