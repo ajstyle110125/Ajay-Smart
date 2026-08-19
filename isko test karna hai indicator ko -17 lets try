@@ -1,0 +1,661 @@
+//@version=6
+indicator(
+     "Parag + Z-Score Probability",
+     shorttitle="Parag + Z Prob",
+     overlay=true,
+     max_labels_count=500
+)
+
+//====================================================
+// PARAG INPUTS
+//====================================================
+
+string grp1 = "Parag Length Inputs"
+
+chartResolution = input.timeframe(
+     "",
+     "Chart Resolution",
+     group=grp1
+)
+
+src = input.source(
+     close,
+     "Source",
+     group=grp1
+)
+
+length = input.int(
+     200,
+     "Adaptive MA Length",
+     group=grp1
+)
+
+majLength = input.int(
+     14,
+     "Major Length",
+     group=grp1
+)
+
+minLength = input.int(
+     6,
+     "Minor Length",
+     group=grp1
+)
+
+//====================================================
+// PARAG SLOPE INPUTS
+//====================================================
+
+string grp2 = "Parag Slope and Dynamic Coloring Parameters"
+
+slopePeriod = input.int(
+     34,
+     "Slope Period",
+     group=grp2
+)
+
+slopeInRange = input.int(
+     25,
+     "Slope Initial Range",
+     group=grp2
+)
+
+flat = input.int(
+     17,
+     "Consolidation area is when slope below",
+     group=grp2
+)
+
+bullCol = input.color(
+     color.green,
+     "Bull Color",
+     group=grp2
+)
+
+bearCol = input.color(
+     color.red,
+     "Bear Color",
+     group=grp2
+)
+
+chopCol = input.color(
+     color.yellow,
+     "Consolidation Color",
+     group=grp2
+)
+
+//====================================================
+// Z-SCORE INPUTS
+//====================================================
+
+string grp3 = "Z-Score Probability"
+
+zLookback = input.int(
+     20,
+     "Z-Score Lookback Length",
+     minval=2,
+     group=grp3
+)
+
+zSmaLength = input.int(
+     50,
+     "Z-Score SMA Period",
+     minval=1,
+     group=grp3
+)
+
+//====================================================
+// SIGNAL SETTINGS
+//====================================================
+
+string grp4 = "Signal Settings"
+
+showSignals = input.bool(
+     true,
+     "Show BUY / SELL Signals",
+     group=grp4
+)
+
+useFreshZCross = input.bool(
+     false,
+     "Require Fresh Z-Score Cross",
+     group=grp4
+)
+
+showStatusTable = input.bool(
+     true,
+     "Show Status Table",
+     group=grp4
+)
+
+//====================================================
+// PARAG SLOPE FUNCTION
+//====================================================
+
+calcSlope(_ma, _src, slopePeriodValue, rangeValue) =>
+
+    pi =
+         math.atan(1) * 4
+
+    highestHigh =
+         ta.highest(
+              high,
+              slopePeriodValue
+         )
+
+    lowestLow =
+         ta.lowest(
+              low,
+              slopePeriodValue
+         )
+
+    priceRange =
+         highestHigh -
+         lowestLow
+
+    slopeRange =
+         priceRange != 0
+         ? rangeValue /
+           priceRange *
+           lowestLow
+         : 0.0
+
+    dt =
+         _src != 0
+         ? (_ma[2] - _ma) /
+           _src *
+           slopeRange
+         : 0.0
+
+    c =
+         math.sqrt(
+              1 +
+              dt * dt
+         )
+
+    xAngle =
+         math.round(
+              180 *
+              math.acos(
+                   1 / c
+              ) /
+              pi
+         )
+
+    maAngle =
+         dt > 0
+         ? -xAngle
+         : xAngle
+
+    maAngle
+
+//====================================================
+// PARAG ADAPTIVE MA FUNCTION
+//====================================================
+
+paragAMA(
+     _src,
+     _length,
+     _minLength,
+     _majLength
+     ) =>
+
+    minAlpha =
+         2.0 /
+         (_minLength + 1)
+
+    majAlpha =
+         2.0 /
+         (_majLength + 1)
+
+    hh =
+         ta.highest(
+              high,
+              _length + 1
+         )
+
+    ll =
+         ta.lowest(
+              low,
+              _length + 1
+         )
+
+    mult =
+         hh - ll != 0
+         ? math.abs(
+              2 * _src -
+              ll -
+              hh
+         ) /
+         (hh - ll)
+         : 0.0
+
+    finalValue =
+         mult *
+         (
+              minAlpha -
+              majAlpha
+         ) +
+         majAlpha
+
+    finalAlpha =
+         math.pow(
+              finalValue,
+              2
+         )
+
+    var float adaptiveMA = na
+
+    adaptiveMA :=
+         na(adaptiveMA[1])
+         ? _src
+         : (
+              _src -
+              adaptiveMA[1]
+         ) *
+         finalAlpha +
+         adaptiveMA[1]
+
+    adaptiveMA
+
+//====================================================
+// PARAG CALCULATION
+//====================================================
+
+parag =
+     request.security(
+          syminfo.tickerid,
+          chartResolution,
+          paragAMA(
+               src,
+               length,
+               minLength,
+               majLength
+          ),
+          barmerge.gaps_off,
+          barmerge.lookahead_off
+     )
+
+paragSlope =
+     calcSlope(
+          parag,
+          src,
+          slopePeriod,
+          slopeInRange
+     )
+
+//====================================================
+// PARAG TREND
+//====================================================
+
+paragBull =
+     paragSlope >
+     flat
+
+paragBear =
+     paragSlope <=
+     -flat
+
+paragChop =
+     not paragBull and
+     not paragBear
+
+paragColor =
+     paragBull
+     ? bullCol
+     : paragBear
+     ? bearCol
+     : chopCol
+
+plot(
+     parag,
+     "Parag",
+     color=paragColor,
+     linewidth=4
+)
+
+//====================================================
+// Z-SCORE CALCULATION
+//====================================================
+
+zMean =
+     ta.sma(
+          close,
+          zLookback
+     )
+
+zDeviation =
+     ta.stdev(
+          close,
+          zLookback
+     )
+
+zClose =
+     not na(zDeviation) and
+     zDeviation != 0.0
+     ? (
+          close -
+          zMean
+     ) /
+     zDeviation
+     : 0.0
+
+zScoreSMA =
+     ta.sma(
+          zClose,
+          zSmaLength
+     )
+
+//====================================================
+// Z-SCORE PROBABILITY
+//====================================================
+
+normalCDF(float z) =>
+
+    float absoluteZ =
+         math.abs(z)
+
+    float t =
+         1.0 /
+         (
+              1.0 +
+              0.2316419 *
+              absoluteZ
+         )
+
+    float density =
+         0.3989422804 *
+         math.exp(
+              -0.5 *
+              absoluteZ *
+              absoluteZ
+         )
+
+    float probabilityValue =
+         1.0 -
+         density *
+         (
+              0.319381530 * t +
+              -0.356563782 * math.pow(t, 2) +
+              1.781477937 * math.pow(t, 3) +
+              -1.821255978 * math.pow(t, 4) +
+              1.330274429 * math.pow(t, 5)
+         )
+
+    z >= 0
+         ? probabilityValue
+         : 1.0 - probabilityValue
+
+probability =
+     normalCDF(
+          zClose
+     )
+
+//====================================================
+// Z-SCORE DIRECTION
+//====================================================
+
+zBull =
+     zClose >
+     zScoreSMA
+
+zBear =
+     zClose <
+     zScoreSMA
+
+zBullCross =
+     barstate.isconfirmed and
+     zClose >
+     zScoreSMA and
+     zClose[1] <=
+     zScoreSMA[1]
+
+zBearCross =
+     barstate.isconfirmed and
+     zClose <
+     zScoreSMA and
+     zClose[1] >=
+     zScoreSMA[1]
+
+//====================================================
+// Z CONFIRMATION MODE
+//====================================================
+
+zBuyOK =
+     useFreshZCross
+     ? zBullCross
+     : zBull
+
+zSellOK =
+     useFreshZCross
+     ? zBearCross
+     : zBear
+
+//====================================================
+// RAW CONDITIONS
+//====================================================
+
+rawBuy =
+     barstate.isconfirmed and
+     paragBull and
+     zBuyOK
+
+rawSell =
+     barstate.isconfirmed and
+     paragBear and
+     zSellOK
+
+//====================================================
+// PREVENT REPEATED SIGNALS
+//====================================================
+
+buySignal =
+     rawBuy and
+     not rawBuy[1]
+
+sellSignal =
+     rawSell and
+     not rawSell[1]
+
+//====================================================
+// BUY / SELL SIGNALS
+//====================================================
+
+plotshape(
+     showSignals and
+     buySignal,
+     title="BUY",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.green,
+     text="BUY",
+     textcolor=color.white,
+     size=size.small
+)
+
+plotshape(
+     showSignals and
+     sellSignal,
+     title="SELL",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=color.red,
+     text="SELL",
+     textcolor=color.white,
+     size=size.small
+)
+
+//====================================================
+// ACTIVE BACKGROUND
+//====================================================
+
+bgcolor(
+     paragBull and zBull
+     ? color.new(
+          color.green,
+          94
+     )
+     : paragBear and zBear
+     ? color.new(
+          color.red,
+          94
+     )
+     : paragChop
+     ? color.new(
+          color.yellow,
+          96
+     )
+     : na
+)
+
+//====================================================
+// STATUS TABLE
+//====================================================
+
+var table status =
+     table.new(
+          position.top_right,
+          2,
+          6,
+          border_width=1
+     )
+
+if barstate.islast
+
+    if showStatusTable
+
+        table.cell(
+             status,
+             0,
+             0,
+             "PARAG"
+        )
+
+        table.cell(
+             status,
+             1,
+             0,
+             paragBull
+             ? "BULL"
+             : paragBear
+             ? "BEAR"
+             : "CHOP",
+             bgcolor=
+                  paragBull
+                  ? color.green
+                  : paragBear
+                  ? color.red
+                  : color.yellow,
+             text_color=color.white
+        )
+
+        table.cell(
+             status,
+             0,
+             1,
+             "PARAG SLOPE"
+        )
+
+        table.cell(
+             status,
+             1,
+             1,
+             str.tostring(
+                  paragSlope,
+                  "#"
+             )
+        )
+
+        table.cell(
+             status,
+             0,
+             2,
+             "Z-SCORE"
+        )
+
+        table.cell(
+             status,
+             1,
+             2,
+             str.tostring(
+                  zClose,
+                  "#.###"
+             )
+        )
+
+        table.cell(
+             status,
+             0,
+             3,
+             "Z SMA 50"
+        )
+
+        table.cell(
+             status,
+             1,
+             3,
+             str.tostring(
+                  zScoreSMA,
+                  "#.###"
+             )
+        )
+
+        table.cell(
+             status,
+             0,
+             4,
+             "PROBABILITY"
+        )
+
+        table.cell(
+             status,
+             1,
+             4,
+             str.tostring(
+                  probability *
+                  100.0,
+                  "#.##"
+             ) +
+             "%"
+        )
+
+        table.cell(
+             status,
+             0,
+             5,
+             "SIGNAL SIDE"
+        )
+
+        table.cell(
+             status,
+             1,
+             5,
+             paragBull and zBull
+             ? "BUY"
+             : paragBear and zBear
+             ? "SELL"
+             : "WAIT",
+             bgcolor=
+                  paragBull and zBull
+                  ? color.green
+                  : paragBear and zBear
+                  ? color.red
+                  : color.gray,
+             text_color=color.white
+        )
+
+//====================================================
+// ALERTS
+//====================================================
+
+alertcondition(
+     buySignal,
+     title="Parag + Z BUY",
+     message="BUY: Parag bullish slope and Z-Score bullish confirmation."
+)
+
+alertcondition(
+     sellSignal,
+     title="Parag + Z SELL",
+     message="SELL: Parag bearish slope and Z-Score bearish confirmation."
+)
